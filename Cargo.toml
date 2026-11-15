@@ -19,6 +19,7 @@ repository = "git@github.com:AgentConnect/awiki-cli-rs2.git"
 [workspace.dependencies]
 awiki-user-dirs = { path = "crates/user-dirs" }
 anyhow = "1"
+argon2 = "0.5"
 async-trait = "0.1"
 base64 = "0.22"
 bs58 = "0.5"

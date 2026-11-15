@@ -57,6 +57,7 @@ pub(crate) mod identity_registration_retired_join;
 pub(crate) mod identity_registration_runtime;
 pub(crate) mod identity_retirement;
 pub(crate) mod identity_root_import_completion;
+pub(crate) mod identity_backup;
 #[cfg(feature = "sqlite")]
 pub(crate) mod identity_root_promotion;
 #[cfg(feature = "sqlite")]

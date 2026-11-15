@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 #[path = "registry_recovery_isolation.rs"]
 mod recovery_isolation;
@@ -430,6 +431,185 @@ impl<'a> IdentityRegistry<'a> {
     ) -> crate::ImResult<super::IdentitySummary> {
         let registry = self.load_registry_async().await?;
         self.resolve_from_snapshot(&registry, selector)
+    }
+
+    /// Produces one opaque, passphrase-encrypted backup for the exact local
+    /// identity. Core owns both the key selection and the container bytes;
+    /// the App only persists the returned package.
+    pub fn export_identity_backup(
+        &self,
+        selector: super::IdentitySelector,
+        passphrase: &str,
+    ) -> crate::ImResult<super::IdentityBackupPackage> {
+        crate::internal::identity_backup::validate_passphrase(passphrase)?;
+        let registry = self.load_registry()?;
+        let entry = registry.find_entry(selector)?;
+        let exported_at = chrono::Utc::now();
+        let material = self.backup_material_for_entry(entry)?;
+        let file_name = crate::internal::identity_backup::backup_file_name(
+            material
+                .full_handle
+                .as_deref()
+                .or(material.handle.as_deref()),
+            material.identity_id.as_str(),
+            &exported_at,
+        );
+        let bytes = crate::internal::identity_backup::seal_identity_backup(
+            &material,
+            passphrase,
+            exported_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        )?;
+        Ok(super::IdentityBackupPackage {
+            file_name,
+            mime_type: crate::internal::identity_backup::BACKUP_MIME_TYPE.to_owned(),
+            bytes,
+        })
+    }
+
+    pub async fn export_identity_backup_async(
+        &self,
+        selector: super::IdentitySelector,
+        passphrase: String,
+    ) -> crate::ImResult<super::IdentityBackupPackage> {
+        let core = self.core.clone();
+        let passphrase = Zeroizing::new(passphrase);
+        crate::internal::runtime::worker::run_blocking(move || {
+            IdentityRegistry::new(&core)
+                .export_identity_backup(selector, passphrase.as_str())
+        })
+        .await
+        .map_err(|error| crate::ImError::Internal {
+            message: error.to_string(),
+        })?
+    }
+
+    fn backup_material_for_entry(
+        &self,
+        entry: &RegistryEntry,
+    ) -> crate::ImResult<crate::internal::identity_backup::IdentityBackupMaterial> {
+        let identity_id = entry.summary.id.as_str().to_owned();
+        let credential_name = first_non_empty([
+            entry.local_alias.as_deref().unwrap_or(""),
+            entry.summary.id.as_str(),
+        ])
+        .unwrap_or(entry.summary.id.as_str())
+        .to_owned();
+        let handle = entry
+            .summary
+            .handle
+            .as_ref()
+            .map(|value| value.as_str().to_owned());
+        let full_handle = handle.clone();
+        let created_at = None;
+        let has_anp_binding = entry.identity_custody_backend.is_some()
+            || entry.anp_identity_store_id.is_some()
+            || entry.anp_identity_id.is_some();
+        let store = crate::internal::identity_store::IdentityStore::new(
+            &self.core.inner().sdk_paths().identities,
+        );
+
+        if let Some(metadata) = entry.vault_migration.as_ref() {
+            if !vault_metadata_is_verified(metadata) {
+                return Err(crate::ImError::PermissionDenied);
+            }
+            let context = self.core.inner().identity_vault().ok_or_else(|| {
+                crate::ImError::UnsupportedCapability {
+                    capability: "identity_backup.vault_unavailable".to_owned(),
+                }
+            })?;
+            if !vault_context_matches_metadata(context, metadata) {
+                return Err(crate::ImError::PermissionDenied);
+            }
+            let vault = context.vault();
+            let (
+                custody,
+                signing_private_pem,
+                did_document_root_private_pem,
+                e2ee_signing_private_pem,
+                e2ee_agreement_private_pem,
+            ) = if let Some(refs) = metadata.vnext_refs.as_ref() {
+                (
+                    "vnext",
+                    open_backup_vault_utf8(vault.as_ref(), &refs.device_request_signing_private)?,
+                    refs.did_document_root_private
+                        .as_ref()
+                        .map(|reference| open_backup_vault_utf8(vault.as_ref(), reference))
+                        .transpose()?,
+                    None,
+                    open_backup_vault_utf8(vault.as_ref(), &refs.e2ee_agreement_private)?,
+                )
+            } else {
+                (
+                    "legacy",
+                    open_backup_vault_utf8(vault.as_ref(), &metadata.refs.default_signing_private)?,
+                    None,
+                    metadata
+                        .refs
+                        .e2ee_signing_private
+                        .as_ref()
+                        .map(|reference| open_backup_vault_utf8(vault.as_ref(), reference))
+                        .transpose()?,
+                    open_backup_vault_utf8(vault.as_ref(), &metadata.refs.e2ee_agreement_private)?,
+                )
+            };
+            let did_document = match entry.identity_dir_name() {
+                Some(dir_name) => store.load_optional_did_document(&dir_name)?,
+                None => None,
+            };
+            return Ok(crate::internal::identity_backup::IdentityBackupMaterial {
+                identity_id,
+                did: entry.summary.did.as_str().to_owned(),
+                handle,
+                full_handle,
+                credential_name,
+                created_at,
+                custody,
+                did_document,
+                signing_private_pem,
+                did_document_root_private_pem,
+                e2ee_signing_private_pem,
+                e2ee_agreement_private_pem,
+            });
+        }
+
+        let Some(dir_name) = entry.identity_dir_name() else {
+            return Err(if has_anp_binding {
+                crate::ImError::UnsupportedCapability {
+                    capability: "identity_backup.custody_only".to_owned(),
+                }
+            } else {
+                crate::ImError::IdentityNotReady {
+                    identity: identity_id,
+                    missing: vec!["identity_directory".to_owned()],
+                }
+            });
+        };
+        let Some(roles) = store.load_file_compat_backup_roles(&dir_name, has_anp_binding)? else {
+            return Err(if has_anp_binding {
+                crate::ImError::UnsupportedCapability {
+                    capability: "identity_backup.custody_only".to_owned(),
+                }
+            } else {
+                crate::ImError::IdentityNotReady {
+                    identity: identity_id,
+                    missing: vec!["identity_private_key".to_owned()],
+                }
+            });
+        };
+        Ok(crate::internal::identity_backup::IdentityBackupMaterial {
+            identity_id,
+            did: entry.summary.did.as_str().to_owned(),
+            handle,
+            full_handle,
+            credential_name,
+            created_at,
+            custody: if has_anp_binding { "vnext" } else { "legacy" },
+            did_document: roles.did_document,
+            signing_private_pem: roles.signing_private_pem,
+            did_document_root_private_pem: roles.did_document_root_private_pem,
+            e2ee_signing_private_pem: roles.e2ee_signing_private_pem,
+            e2ee_agreement_private_pem: roles.e2ee_agreement_private_pem,
+        })
     }
 
     pub fn update_display_name_projection(
@@ -3757,6 +3937,19 @@ fn vault_context_matches_metadata(
 ) -> bool {
     context.workspace_id() == metadata.workspace_id
         && context.vault_context_device_id().as_str() == metadata.device_id
+}
+
+fn open_backup_vault_utf8(
+    vault: &dyn crate::internal::secret_vault::SecretVault,
+    secret_ref: &crate::internal::secret_vault::record::SecretRef,
+) -> crate::ImResult<Zeroizing<String>> {
+    let opened = vault.open(secret_ref)?;
+    let text = std::str::from_utf8(opened.expose_secret())
+        .map_err(|_| crate::ImError::PermissionDenied)?;
+    if text.trim().is_empty() {
+        return Err(crate::ImError::PermissionDenied);
+    }
+    Ok(Zeroizing::new(text.to_owned()))
 }
 
 fn default_alias_from_file(path: Option<&Path>) -> crate::ImResult<Option<String>> {

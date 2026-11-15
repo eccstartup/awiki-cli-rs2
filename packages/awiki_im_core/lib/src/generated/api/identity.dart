@@ -9,6 +9,7 @@ import '../dto/identity.dart';
 import '../frb_generated.dart';
 import 'attachments.dart';
 import 'client.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
@@ -618,4 +619,14 @@ Future<void> retryDeviceJoinManagement({
   core: core,
   selector: selector,
   joinSessionId: joinSessionId,
+);
+
+Future<DartIdentityBackupPackage> exportIdentityBackup({
+  required ArcDartImCore core,
+  required DartIdentitySelector selector,
+  required List<int> passphrase,
+}) => RustLib.instance.api.crateApiIdentityExportIdentityBackup(
+  core: core,
+  selector: selector,
+  passphrase: passphrase,
 );

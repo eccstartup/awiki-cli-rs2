@@ -108,6 +108,27 @@ class LocalAliasIdentitySelector extends IdentitySelector {
   final String alias;
 }
 
+/// Opaque encrypted identity backup produced by Core.
+///
+/// Hosts may persist or transfer [bytes] but must never parse, re-encrypt or
+/// inspect them. The container format is owned by `im-core`.
+class IdentityBackupPackage {
+  const IdentityBackupPackage({
+    required this.fileName,
+    required this.mimeType,
+    required this.bytes,
+  });
+
+  final String fileName;
+  final String mimeType;
+  final Uint8List bytes;
+
+  @override
+  String toString() =>
+      'IdentityBackupPackage(fileName: $fileName, mimeType: $mimeType, '
+      'bytes: <redacted>)';
+}
+
 class IdentitySummary {
   const IdentitySummary({
     required this.id,

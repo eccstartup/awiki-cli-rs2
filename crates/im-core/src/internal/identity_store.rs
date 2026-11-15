@@ -34,6 +34,14 @@ pub(crate) struct IdentityStore<'a> {
     paths: &'a crate::paths::IdentityRegistryPaths,
 }
 
+pub(crate) struct FileCompatBackupRoles {
+    pub(crate) signing_private_pem: Zeroizing<String>,
+    pub(crate) did_document_root_private_pem: Option<Zeroizing<String>>,
+    pub(crate) e2ee_signing_private_pem: Option<Zeroizing<String>>,
+    pub(crate) e2ee_agreement_private_pem: Zeroizing<String>,
+    pub(crate) did_document: Option<Value>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SaveIdentityInput {
     pub(crate) local_alias: String,
@@ -1501,6 +1509,26 @@ impl<'a> IdentityStore<'a> {
         }
     }
 
+    pub(crate) fn load_optional_did_document(
+        &self,
+        identity_dir_name: &str,
+    ) -> crate::ImResult<Option<Value>> {
+        let identity_dir = local_identity_dir(&self.paths.identity_root_dir, identity_dir_name)?;
+        let path = first_existing_path(&identity_dir, &[DID_DOCUMENT_FILE_NAME, "did.json"]);
+        match fs::read(&path) {
+            Ok(raw) => serde_json::from_slice(&raw)
+                .map(Some)
+                .map_err(|error| crate::ImError::Serialization {
+                    detail: error.to_string(),
+                }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(crate::ImError::CredentialFileUnreadable {
+                path_kind: "did_document".to_owned(),
+                detail: error.to_string(),
+            }),
+        }
+    }
+
     pub(crate) fn save_did_document(
         &self,
         identity_dir_name: &str,
@@ -1535,6 +1563,62 @@ impl<'a> IdentityStore<'a> {
                 detail: err.to_string(),
             }),
         }
+    }
+
+    /// Reads the plaintext-compat identity files for an encrypted backup.
+    /// Returns `None` when no private key material exists locally at all;
+    /// a partially written set fails closed instead of exporting a subset.
+    pub(crate) fn load_file_compat_backup_roles(
+        &self,
+        identity_dir_name: &str,
+        vnext: bool,
+    ) -> crate::ImResult<Option<FileCompatBackupRoles>> {
+        let identity_dir = self.local_identity_dir(identity_dir_name)?;
+        let key1 = read_optional_non_empty_text(
+            &first_existing_path(&identity_dir, &[KEY1_PRIVATE_FILE_NAME, "private.key"]),
+            "private_key",
+        )?;
+        let e2ee_signing = read_optional_non_empty_text(
+            &identity_dir.join(E2EE_SIGNING_PRIVATE_FILE_NAME),
+            "e2ee_signing_private_key",
+        )?;
+        let agreement = read_optional_non_empty_text(
+            &first_existing_path(
+                &identity_dir,
+                &[E2EE_AGREEMENT_PRIVATE_FILE_NAME, "key-3-private.pem"],
+            ),
+            "e2ee_agreement_private_key",
+        )?;
+        if key1.is_none() && e2ee_signing.is_none() && agreement.is_none() {
+            return Ok(None);
+        }
+        let identity_id = identity_dir_name.to_owned();
+        let missing = |name: &str| crate::ImError::IdentityNotReady {
+            identity: identity_id.clone(),
+            missing: vec![name.to_owned()],
+        };
+        let agreement = agreement.ok_or_else(|| missing("e2ee_agreement_private_key"))?;
+        let (signing, root, e2ee_signing_out) = if vnext {
+            (
+                e2ee_signing.ok_or_else(|| missing("device_signing_private_key"))?,
+                key1,
+                None,
+            )
+        } else {
+            (
+                key1.ok_or_else(|| missing("private_key"))?,
+                None,
+                e2ee_signing,
+            )
+        };
+        let did_document = self.load_optional_did_document(identity_dir_name)?;
+        Ok(Some(FileCompatBackupRoles {
+            signing_private_pem: Zeroizing::new(signing),
+            did_document_root_private_pem: root.map(Zeroizing::new),
+            e2ee_signing_private_pem: e2ee_signing_out.map(Zeroizing::new),
+            e2ee_agreement_private_pem: Zeroizing::new(agreement),
+            did_document,
+        }))
     }
 
     pub(crate) fn migrate_identity_to_vault(

@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use zeroize::Zeroize;
+
 use crate::dto::{
     error::DartImError,
     identity::{
@@ -11,8 +13,9 @@ use crate::dto::{
         DartDeviceJoinSessionSummary, DartDeviceRevokeResult,
         DartHandleRecoveryAccountEpochReceipt, DartHandleRecoveryContext,
         DartHandleRecoveryOperationSummary, DartHandleRecoveryOtpResult,
-        DartHandleRecoveryProgress, DartHandleRegistrationResult, DartIdentityCustodyStatus,
-        DartIdentityDeviceSummary, DartIdentitySelector, DartIdentitySummary,
+        DartHandleRecoveryProgress, DartHandleRegistrationResult, DartIdentityBackupPackage,
+        DartIdentityCustodyStatus, DartIdentityDeviceSummary, DartIdentitySelector,
+        DartIdentitySummary,
         DartIdentityVaultMigrationReport, DartIdentityVaultStatus,
         DartIdentityVaultVerificationReport, DartInitialProfile,
         DartLegacyRegistryEpochAdoptionAuthority, DartLegacyUpgradeStatus,
@@ -1038,5 +1041,26 @@ pub async fn retry_device_join_management(
         .device_join()
         .retry_device_join_management(selector.try_into()?, &join_session_id)
         .await
+        .map_err(DartImError::from)
+}
+
+pub async fn export_identity_backup(
+    core: &Arc<crate::api::core::DartImCore>,
+    selector: DartIdentitySelector,
+    passphrase: Vec<u8>,
+) -> Result<DartIdentityBackupPackage, DartImError> {
+    let passphrase = String::from_utf8(passphrase).map_err(|error| {
+        let mut bytes = error.into_bytes();
+        bytes.zeroize();
+        DartImError::invalid_input(
+            Some("passphrase".to_owned()),
+            "The passphrase must be valid UTF-8",
+        )
+    })?;
+    core.clone_inner()?
+        .identities()
+        .export_identity_backup_async(selector.try_into()?, passphrase)
+        .await
+        .map(DartIdentityBackupPackage::from)
         .map_err(DartImError::from)
 }

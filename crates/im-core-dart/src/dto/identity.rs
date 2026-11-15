@@ -660,3 +660,22 @@ impl From<im_core::identity::DeviceJoinManagementStatus> for DartDeviceJoinManag
         }
     }
 }
+
+/// Opaque encrypted identity backup. Hosts may persist or transfer these bytes
+/// but must never parse, re-encrypt or inspect them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DartIdentityBackupPackage {
+    pub file_name: String,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl From<im_core::identity::IdentityBackupPackage> for DartIdentityBackupPackage {
+    fn from(value: im_core::identity::IdentityBackupPackage) -> Self {
+        Self {
+            file_name: value.file_name,
+            mime_type: value.mime_type,
+            bytes: value.bytes,
+        }
+    }
+}

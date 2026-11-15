@@ -768,6 +768,16 @@ pub struct DeleteLocalIdentityResult {
     pub warnings: Vec<String>,
 }
 
+/// Opaque encrypted identity backup produced by Core. Hosts may only persist
+/// or transfer these bytes; they never parse, re-encrypt or inspect them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityBackupPackage {
+    pub file_name: String,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Opaque, secret-free authority for one committed local identity data
 /// deletion. Hosts use it only to coordinate their own product store before
 /// asking Core to continue the same deletion.

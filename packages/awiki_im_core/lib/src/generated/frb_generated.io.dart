@@ -17,9 +17,11 @@ import 'api/profile.dart';
 import 'api/realtime.dart';
 import 'api/secure.dart';
 import 'api/unsupported.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+
 import 'dto/attachment.dart';
 import 'dto/auth.dart';
 import 'dto/config.dart';
@@ -34,6 +36,7 @@ import 'dto/profile.dart';
 import 'dto/realtime.dart';
 import 'dto/secure.dart';
 import 'frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
@@ -837,6 +840,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartHandleRegistrationResult dco_decode_dart_handle_registration_result(
+    dynamic raw,
+  );
+
+  @protected
+  DartIdentityBackupPackage dco_decode_dart_identity_backup_package(
     dynamic raw,
   );
 
@@ -2437,6 +2445,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartHandleRegistrationResult sse_decode_dart_handle_registration_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DartIdentityBackupPackage sse_decode_dart_identity_backup_package(
     SseDeserializer deserializer,
   );
 
@@ -4361,6 +4374,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_dart_handle_registration_result(
     DartHandleRegistrationResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_dart_identity_backup_package(
+    DartIdentityBackupPackage self,
     SseSerializer serializer,
   );
 

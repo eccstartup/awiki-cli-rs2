@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'models/attachment.dart';
 import 'models/config.dart';
 import 'models/identity.dart';
@@ -173,6 +175,11 @@ class AwikiImCore {
   Future<Map<String, Object?>> identityDocument(
     IdentitySelector selector,
   ) async => throw _unsupported();
+
+  Future<IdentityBackupPackage> exportIdentityBackup(
+    IdentitySelector selector, {
+    required Uint8List passphrase,
+  }) async => throw _unsupported();
 
   Future<bool> identityServicesUpdatePending(IdentitySelector selector) async =>
       throw _unsupported();

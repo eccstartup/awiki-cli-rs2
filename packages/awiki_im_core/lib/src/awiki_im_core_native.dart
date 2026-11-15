@@ -496,6 +496,31 @@ class AwikiImCore {
     return Map<String, Object?>.from(jsonDecode(value) as Map);
   }
 
+  /// Produces an opaque, passphrase-encrypted identity backup.
+  ///
+  /// Core owns the container format and the exact exported material. Callers
+  /// must not attempt to parse [IdentityBackupPackage.bytes]. Core copies
+  /// [passphrase] synchronously inside the native call; callers should clear
+  /// their own buffer as soon as this future completes.
+  Future<IdentityBackupPackage> exportIdentityBackup(
+    IdentitySelector selector, {
+    required Uint8List passphrase,
+  }) async {
+    _ensureNotDisposed();
+    final value = await _mapNativeErrors(
+      () => gen_identity_api.exportIdentityBackup(
+        core: _inner,
+        selector: selector._toGen(),
+        passphrase: passphrase,
+      ),
+    );
+    return IdentityBackupPackage(
+      fileName: value.fileName,
+      mimeType: value.mimeType,
+      bytes: value.bytes,
+    );
+  }
+
   Future<bool> identityServicesUpdatePending(IdentitySelector selector) async {
     _ensureNotDisposed();
     return _mapNativeErrors(

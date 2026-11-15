@@ -5,6 +5,7 @@
 
 import '../frb_generated.dart';
 import 'config.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'identity.freezed.dart';
@@ -1115,6 +1116,32 @@ class DartHandleRegistrationResult {
           joinRequired == other.joinRequired &&
           defaultIdentityChange == other.defaultIdentityChange &&
           warnings == other.warnings;
+}
+
+/// Opaque encrypted identity backup. Hosts may persist or transfer these bytes
+/// but must never parse, re-encrypt or inspect them.
+class DartIdentityBackupPackage {
+  final String fileName;
+  final String mimeType;
+  final Uint8List bytes;
+
+  const DartIdentityBackupPackage({
+    required this.fileName,
+    required this.mimeType,
+    required this.bytes,
+  });
+
+  @override
+  int get hashCode => fileName.hashCode ^ mimeType.hashCode ^ bytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartIdentityBackupPackage &&
+          runtimeType == other.runtimeType &&
+          fileName == other.fileName &&
+          mimeType == other.mimeType &&
+          bytes == other.bytes;
 }
 
 enum DartIdentityCustodyBackend { anpIdentity, legacyFileCompat, legacyVault }
