@@ -34,6 +34,60 @@ void main() {
     expect(override.path, '/tmp/libawiki_im_core.dylib');
   });
 
+  test('macOS loads a Core dylib packaged inside the app bundle', () {
+    final selection = resolveAwikiImCoreLibrary(
+      operatingSystem: 'macos',
+      macOsBundledDylibPath:
+          ' /Applications/AWikiMe.app/Contents/Frameworks/libawiki_im_core.dylib ',
+    );
+
+    expect(selection.source, AwikiImCoreLibrarySource.open);
+    expect(
+      selection.path,
+      '/Applications/AWikiMe.app/Contents/Frameworks/libawiki_im_core.dylib',
+    );
+  });
+
+  test('an explicit macOS dylib override wins over the bundled dylib', () {
+    final selection = resolveAwikiImCoreLibrary(
+      operatingSystem: 'macos',
+      macOsDylibPath: '/tmp/custom/libawiki_im_core.dylib',
+      macOsBundledDylibPath:
+          '/Applications/AWikiMe.app/Contents/Frameworks/libawiki_im_core.dylib',
+    );
+
+    expect(selection.source, AwikiImCoreLibrarySource.open);
+    expect(selection.path, '/tmp/custom/libawiki_im_core.dylib');
+  });
+
+  test('bundled dylib resolution follows the executable bundle layout', () {
+    final existing = <String>{
+      '/tmp/AWikiMe.app/Contents/Frameworks/libawiki_im_core.dylib',
+    };
+
+    expect(
+      resolveBundledMacOsDylibPath(
+        resolvedExecutable: '/tmp/AWikiMe.app/Contents/MacOS/AWikiMe',
+        exists: existing.contains,
+      ),
+      '/tmp/AWikiMe.app/Contents/Frameworks/libawiki_im_core.dylib',
+    );
+    expect(
+      resolveBundledMacOsDylibPath(
+        resolvedExecutable: '/tmp/flutter_tester',
+        exists: existing.contains,
+      ),
+      isNull,
+    );
+    expect(
+      resolveBundledMacOsDylibPath(
+        resolvedExecutable: '/tmp/Other.app/Contents/MacOS/Other',
+        exists: existing.contains,
+      ),
+      isNull,
+    );
+  });
+
   test('unsupported operating systems fail before native loading', () {
     expect(
       () => resolveAwikiImCoreLibrary(operatingSystem: 'fuchsia'),

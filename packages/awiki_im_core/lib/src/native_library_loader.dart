@@ -20,6 +20,7 @@ final class AwikiImCoreLibrarySelection {
 AwikiImCoreLibrarySelection resolveAwikiImCoreLibrary({
   required String operatingSystem,
   String? macOsDylibPath,
+  String? macOsBundledDylibPath,
 }) {
   switch (operatingSystem) {
     case 'android':
@@ -32,6 +33,10 @@ AwikiImCoreLibrarySelection resolveAwikiImCoreLibrary({
       if (configuredPath != null && configuredPath.isNotEmpty) {
         return AwikiImCoreLibrarySelection.open(configuredPath);
       }
+      final bundledPath = macOsBundledDylibPath?.trim();
+      if (bundledPath != null && bundledPath.isNotEmpty) {
+        return AwikiImCoreLibrarySelection.open(bundledPath);
+      }
       return const AwikiImCoreLibrarySelection.process();
     case 'ios':
       return const AwikiImCoreLibrarySelection.process();
@@ -43,10 +48,30 @@ AwikiImCoreLibrarySelection resolveAwikiImCoreLibrary({
   }
 }
 
+/// Resolves a Core dylib shipped inside the running macOS app bundle.
+///
+/// Production builds link Core into the Runner, so bundles without the dylib
+/// keep using process lookup. Bundles that package the dylib load it relative
+/// to `Contents/MacOS`, so moving the app does not break Core loading.
+String? resolveBundledMacOsDylibPath({
+  required String resolvedExecutable,
+  required bool Function(String path) exists,
+}) {
+  const marker = '/Contents/MacOS/';
+  final index = resolvedExecutable.lastIndexOf(marker);
+  if (index <= 0) {
+    return null;
+  }
+  final bundlePath = resolvedExecutable.substring(0, index);
+  final candidate = '$bundlePath/Contents/Frameworks/libawiki_im_core.dylib';
+  return exists(candidate) ? candidate : null;
+}
+
 DynamicLibrary loadAwikiImCoreLibrary() {
   final selection = resolveAwikiImCoreLibrary(
     operatingSystem: Platform.operatingSystem,
     macOsDylibPath: _configuredMacOsDylibPath(),
+    macOsBundledDylibPath: _bundledMacOsDylibPath(),
   );
   return switch (selection.source) {
     AwikiImCoreLibrarySource.open => DynamicLibrary.open(selection.path!),
@@ -58,6 +83,7 @@ ExternalLibrary loadAwikiImCoreExternalLibrary() {
   final selection = resolveAwikiImCoreLibrary(
     operatingSystem: Platform.operatingSystem,
     macOsDylibPath: _configuredMacOsDylibPath(),
+    macOsBundledDylibPath: _bundledMacOsDylibPath(),
   );
   return switch (selection.source) {
     AwikiImCoreLibrarySource.open => ExternalLibrary.open(selection.path!),
@@ -72,4 +98,14 @@ String? _configuredMacOsDylibPath() {
     return null;
   }
   return value;
+}
+
+String? _bundledMacOsDylibPath() {
+  if (!Platform.isMacOS) {
+    return null;
+  }
+  return resolveBundledMacOsDylibPath(
+    resolvedExecutable: Platform.resolvedExecutable,
+    exists: (path) => File(path).existsSync(),
+  );
 }
