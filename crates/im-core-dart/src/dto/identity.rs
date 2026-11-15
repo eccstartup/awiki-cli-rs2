@@ -222,6 +222,7 @@ pub enum DartIdentityDeviceRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DartIdentityDeviceReadiness {
     Legacy,
+    RootOnly,
     MemberReady,
     AdminAwaitingRoot,
     AdminReady,
@@ -676,6 +677,57 @@ impl From<im_core::identity::IdentityBackupPackage> for DartIdentityBackupPackag
             file_name: value.file_name,
             mime_type: value.mime_type,
             bytes: value.bytes,
+        }
+    }
+}
+
+/// Secret-free summary of a validated backup. Never carries key material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DartIdentityBackupInspection {
+    pub did: String,
+    pub handle: Option<String>,
+    pub full_handle: Option<String>,
+    pub display_name: String,
+    pub custody: String,
+    pub created_at: Option<String>,
+    pub exported_at: String,
+    pub source_core_version: String,
+    pub key_kinds: Vec<String>,
+    pub has_did_document: bool,
+}
+
+impl From<im_core::identity::IdentityBackupInspection> for DartIdentityBackupInspection {
+    fn from(value: im_core::identity::IdentityBackupInspection) -> Self {
+        Self {
+            did: value.did,
+            handle: value.handle,
+            full_handle: value.full_handle,
+            display_name: value.display_name,
+            custody: value.custody,
+            created_at: value.created_at,
+            exported_at: value.exported_at,
+            source_core_version: value.source_core_version,
+            key_kinds: value.key_kinds,
+            has_did_document: value.has_did_document,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DartIdentityImportResult {
+    pub identity_id: String,
+    pub did: String,
+    pub root_key_id: String,
+    pub already_present: bool,
+}
+
+impl From<im_core::identity::IdentityImportResult> for DartIdentityImportResult {
+    fn from(value: im_core::identity::IdentityImportResult) -> Self {
+        Self {
+            identity_id: value.identity_id.as_str().to_owned(),
+            did: value.did.as_str().to_owned(),
+            root_key_id: value.root_key_id,
+            already_present: value.already_present,
         }
     }
 }

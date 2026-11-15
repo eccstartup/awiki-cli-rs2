@@ -846,6 +846,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  DartIdentityBackupInspection dco_decode_dart_identity_backup_inspection(
+    dynamic raw,
+  );
+
+  @protected
   DartIdentityBackupPackage dco_decode_dart_identity_backup_package(
     dynamic raw,
   );
@@ -878,6 +883,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DartIdentityDeviceSummary dco_decode_dart_identity_device_summary(
     dynamic raw,
   );
+
+  @protected
+  DartIdentityImportResult dco_decode_dart_identity_import_result(dynamic raw);
 
   @protected
   DartIdentitySecretStorageBackend
@@ -2451,6 +2459,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  DartIdentityBackupInspection sse_decode_dart_identity_backup_inspection(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DartIdentityBackupPackage sse_decode_dart_identity_backup_package(
     SseDeserializer deserializer,
   );
@@ -2487,6 +2500,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartIdentityDeviceSummary sse_decode_dart_identity_device_summary(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DartIdentityImportResult sse_decode_dart_identity_import_result(
     SseDeserializer deserializer,
   );
 
@@ -4380,6 +4398,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_dart_identity_backup_inspection(
+    DartIdentityBackupInspection self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_dart_identity_backup_package(
     DartIdentityBackupPackage self,
     SseSerializer serializer,
@@ -4424,6 +4448,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_dart_identity_device_summary(
     DartIdentityDeviceSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_dart_identity_import_result(
+    DartIdentityImportResult self,
     SseSerializer serializer,
   );
 

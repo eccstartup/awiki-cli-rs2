@@ -630,3 +630,28 @@ Future<DartIdentityBackupPackage> exportIdentityBackup({
   selector: selector,
   passphrase: passphrase,
 );
+
+/// Decrypts and validates one backup without changing local state.
+Future<DartIdentityBackupInspection> inspectIdentityBackup({
+  required ArcDartImCore core,
+  required List<int> bytes,
+  required List<int> passphrase,
+}) => RustLib.instance.api.crateApiIdentityInspectIdentityBackup(
+  core: core,
+  bytes: bytes,
+  passphrase: passphrase,
+);
+
+/// Installs identity material only. Conversations and messages are untouched.
+/// `user_presence_confirmed` must come from a real system authentication.
+Future<DartIdentityImportResult> importIdentityBackup({
+  required ArcDartImCore core,
+  required List<int> bytes,
+  required List<int> passphrase,
+  required bool userPresenceConfirmed,
+}) => RustLib.instance.api.crateApiIdentityImportIdentityBackup(
+  core: core,
+  bytes: bytes,
+  passphrase: passphrase,
+  userPresenceConfirmed: userPresenceConfirmed,
+);

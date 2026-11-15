@@ -1118,6 +1118,62 @@ class DartHandleRegistrationResult {
           warnings == other.warnings;
 }
 
+/// Secret-free summary of a validated backup. Never carries key material.
+class DartIdentityBackupInspection {
+  final String did;
+  final String? handle;
+  final String? fullHandle;
+  final String displayName;
+  final String custody;
+  final String? createdAt;
+  final String exportedAt;
+  final String sourceCoreVersion;
+  final List<String> keyKinds;
+  final bool hasDidDocument;
+
+  const DartIdentityBackupInspection({
+    required this.did,
+    this.handle,
+    this.fullHandle,
+    required this.displayName,
+    required this.custody,
+    this.createdAt,
+    required this.exportedAt,
+    required this.sourceCoreVersion,
+    required this.keyKinds,
+    required this.hasDidDocument,
+  });
+
+  @override
+  int get hashCode =>
+      did.hashCode ^
+      handle.hashCode ^
+      fullHandle.hashCode ^
+      displayName.hashCode ^
+      custody.hashCode ^
+      createdAt.hashCode ^
+      exportedAt.hashCode ^
+      sourceCoreVersion.hashCode ^
+      keyKinds.hashCode ^
+      hasDidDocument.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartIdentityBackupInspection &&
+          runtimeType == other.runtimeType &&
+          did == other.did &&
+          handle == other.handle &&
+          fullHandle == other.fullHandle &&
+          displayName == other.displayName &&
+          custody == other.custody &&
+          createdAt == other.createdAt &&
+          exportedAt == other.exportedAt &&
+          sourceCoreVersion == other.sourceCoreVersion &&
+          keyKinds == other.keyKinds &&
+          hasDidDocument == other.hasDidDocument;
+}
+
 /// Opaque encrypted identity backup. Hosts may persist or transfer these bytes
 /// but must never parse, re-encrypt or inspect them.
 class DartIdentityBackupPackage {
@@ -1214,6 +1270,7 @@ enum DartIdentityDeviceMode { legacy, vNext }
 
 enum DartIdentityDeviceReadiness {
   legacy,
+  rootOnly,
   memberReady,
   adminAwaitingRoot,
   adminReady,
@@ -1267,6 +1324,37 @@ class DartIdentityDeviceSummary {
           e2EeKeyId == other.e2EeKeyId &&
           readiness == other.readiness &&
           blockedReason == other.blockedReason;
+}
+
+class DartIdentityImportResult {
+  final String identityId;
+  final String did;
+  final String rootKeyId;
+  final bool alreadyPresent;
+
+  const DartIdentityImportResult({
+    required this.identityId,
+    required this.did,
+    required this.rootKeyId,
+    required this.alreadyPresent,
+  });
+
+  @override
+  int get hashCode =>
+      identityId.hashCode ^
+      did.hashCode ^
+      rootKeyId.hashCode ^
+      alreadyPresent.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartIdentityImportResult &&
+          runtimeType == other.runtimeType &&
+          identityId == other.identityId &&
+          did == other.did &&
+          rootKeyId == other.rootKeyId &&
+          alreadyPresent == other.alreadyPresent;
 }
 
 enum DartIdentitySecretStorageBackend { fileCompat, vault }

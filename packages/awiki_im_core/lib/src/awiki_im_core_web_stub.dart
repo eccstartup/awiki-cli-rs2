@@ -181,6 +181,17 @@ class AwikiImCore {
     required Uint8List passphrase,
   }) async => throw _unsupported();
 
+  Future<IdentityBackupInspection> inspectIdentityBackup(
+    Uint8List bytes, {
+    required Uint8List passphrase,
+  }) async => throw _unsupported();
+
+  Future<IdentityImportResult> importIdentityBackup(
+    Uint8List bytes, {
+    required Uint8List passphrase,
+    required bool userPresenceConfirmed,
+  }) async => throw _unsupported();
+
   Future<bool> identityServicesUpdatePending(IdentitySelector selector) async =>
       throw _unsupported();
 

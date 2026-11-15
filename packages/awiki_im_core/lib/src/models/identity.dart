@@ -129,6 +129,52 @@ class IdentityBackupPackage {
       'bytes: <redacted>)';
 }
 
+/// Secret-free summary of a backup that Core decrypted and validated.
+///
+/// No private key material ever leaves Core through this projection.
+class IdentityBackupInspection {
+  const IdentityBackupInspection({
+    required this.did,
+    this.handle,
+    this.fullHandle,
+    required this.displayName,
+    required this.custody,
+    this.createdAt,
+    required this.exportedAt,
+    required this.sourceCoreVersion,
+    required this.keyKinds,
+    required this.hasDidDocument,
+  });
+
+  final String did;
+  final String? handle;
+  final String? fullHandle;
+  final String displayName;
+  final String custody;
+  final String? createdAt;
+  final String exportedAt;
+  final String sourceCoreVersion;
+  final List<String> keyKinds;
+  final bool hasDidDocument;
+}
+
+/// Result of installing the identity material carried by one backup.
+///
+/// Messages, conversations, contacts and read state are never restored.
+class IdentityImportResult {
+  const IdentityImportResult({
+    required this.identityId,
+    required this.did,
+    required this.rootKeyId,
+    required this.alreadyPresent,
+  });
+
+  final String identityId;
+  final String did;
+  final String rootKeyId;
+  final bool alreadyPresent;
+}
+
 class IdentitySummary {
   const IdentitySummary({
     required this.id,
@@ -421,6 +467,10 @@ enum IdentityDeviceRole { member, admin }
 
 enum IdentityDeviceReadiness {
   legacy,
+
+  /// Root control is available without a locally registered protocol device,
+  /// as with an imported ANP root-only identity.
+  rootOnly,
   memberReady,
   adminAwaitingRoot,
   adminReady,

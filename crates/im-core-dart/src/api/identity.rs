@@ -13,8 +13,9 @@ use crate::dto::{
         DartDeviceJoinSessionSummary, DartDeviceRevokeResult,
         DartHandleRecoveryAccountEpochReceipt, DartHandleRecoveryContext,
         DartHandleRecoveryOperationSummary, DartHandleRecoveryOtpResult,
-        DartHandleRecoveryProgress, DartHandleRegistrationResult, DartIdentityBackupPackage,
-        DartIdentityCustodyStatus, DartIdentityDeviceSummary, DartIdentitySelector,
+        DartHandleRecoveryProgress, DartHandleRegistrationResult, DartIdentityBackupInspection,
+        DartIdentityBackupPackage, DartIdentityCustodyStatus, DartIdentityDeviceSummary,
+        DartIdentityImportResult, DartIdentitySelector,
         DartIdentitySummary,
         DartIdentityVaultMigrationReport, DartIdentityVaultStatus,
         DartIdentityVaultVerificationReport, DartInitialProfile,
@@ -1062,5 +1063,57 @@ pub async fn export_identity_backup(
         .export_identity_backup_async(selector.try_into()?, passphrase)
         .await
         .map(DartIdentityBackupPackage::from)
+        .map_err(DartImError::from)
+}
+
+/// Decrypts and validates one backup without changing local state.
+pub async fn inspect_identity_backup(
+    core: &Arc<crate::api::core::DartImCore>,
+    bytes: Vec<u8>,
+    passphrase: Vec<u8>,
+) -> Result<DartIdentityBackupInspection, DartImError> {
+    let passphrase = String::from_utf8(passphrase).map_err(|error| {
+        let mut bytes = error.into_bytes();
+        bytes.zeroize();
+        DartImError::invalid_input(
+            Some("passphrase".to_owned()),
+            "The passphrase must be valid UTF-8",
+        )
+    })?;
+    core.clone_inner()?
+        .identities()
+        .inspect_identity_backup_async(bytes, passphrase)
+        .await
+        .map(DartIdentityBackupInspection::from)
+        .map_err(DartImError::from)
+}
+
+/// Installs identity material only. Conversations and messages are untouched.
+/// `user_presence_confirmed` must come from a real system authentication.
+pub async fn import_identity_backup(
+    core: &Arc<crate::api::core::DartImCore>,
+    bytes: Vec<u8>,
+    passphrase: Vec<u8>,
+    user_presence_confirmed: bool,
+) -> Result<DartIdentityImportResult, DartImError> {
+    let passphrase = String::from_utf8(passphrase).map_err(|error| {
+        let mut bytes = error.into_bytes();
+        bytes.zeroize();
+        DartImError::invalid_input(
+            Some("passphrase".to_owned()),
+            "The passphrase must be valid UTF-8",
+        )
+    })?;
+    let bytes = zeroize::Zeroizing::new(bytes);
+    let passphrase = zeroize::Zeroizing::new(passphrase);
+    core.clone_inner()?
+        .identities()
+        .import_identity_backup(
+            bytes.as_slice(),
+            passphrase.as_str(),
+            user_presence_confirmed,
+        )
+        .await
+        .map(DartIdentityImportResult::from)
         .map_err(DartImError::from)
 }

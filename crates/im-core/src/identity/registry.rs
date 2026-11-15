@@ -483,6 +483,202 @@ impl<'a> IdentityRegistry<'a> {
         })?
     }
 
+    /// Decrypts and validates one opaque AWIKIBK1 container without changing
+    /// local identity state. Only the secret-free summary leaves Core.
+    pub fn inspect_identity_backup(
+        &self,
+        bytes: &[u8],
+        passphrase: &str,
+    ) -> crate::ImResult<super::IdentityBackupInspection> {
+        let opened = crate::internal::identity_backup::inspect_identity_backup(bytes, passphrase)?;
+        Ok(super::IdentityBackupInspection {
+            did: opened.did,
+            handle: opened.handle,
+            full_handle: opened.full_handle,
+            display_name: opened.credential_name,
+            custody: crate::internal::identity_backup::BACKUP_ANP_ROOT_CUSTODY.to_owned(),
+            created_at: opened.created_at,
+            exported_at: opened.exported_at,
+            source_core_version: opened.core_version,
+            key_kinds: vec!["did_document_root".to_owned()],
+            has_did_document: true,
+        })
+    }
+
+    pub async fn inspect_identity_backup_async(
+        &self,
+        bytes: Vec<u8>,
+        passphrase: String,
+    ) -> crate::ImResult<super::IdentityBackupInspection> {
+        let core = self.core.clone();
+        let bytes = Zeroizing::new(bytes);
+        let passphrase = Zeroizing::new(passphrase);
+        crate::internal::runtime::worker::run_blocking(move || {
+            IdentityRegistry::new(&core)
+                .inspect_identity_backup(bytes.as_slice(), passphrase.as_str())
+        })
+        .await
+        .map_err(|error| crate::ImError::Internal {
+            message: error.to_string(),
+        })?
+    }
+
+    /// Installs only the identity material carried by one validated backup.
+    /// Conversations, messages, contacts and read state are never restored.
+    /// `user_presence_confirmed` is a boolean assertion produced by the host
+    /// after real system authentication; Core fails closed when it is absent.
+    pub async fn import_identity_backup(
+        &self,
+        bytes: &[u8],
+        passphrase: &str,
+        user_presence_confirmed: bool,
+    ) -> crate::ImResult<super::IdentityImportResult> {
+        if !user_presence_confirmed {
+            return Err(crate::ImError::PermissionDenied);
+        }
+        let opened = crate::internal::identity_backup::inspect_identity_backup(bytes, passphrase)?;
+        let registry = self.load_registry_async().await?;
+        if registry
+            .blocked_entries
+            .iter()
+            .any(|entry| entry.summary.did.as_str() == opened.did)
+        {
+            return Err(crate::ImError::PermissionDenied);
+        }
+        let did = crate::ids::Did::parse(&opened.did).map_err(|_| {
+            crate::ImError::IdentityBackup {
+                failure: crate::error::IdentityBackupFailure::PayloadInvalid,
+            }
+        })?;
+        if let Some(entry) = registry
+            .entries
+            .iter()
+            .find(|entry| entry.summary.did == did)
+        {
+            return self.import_identity_backup_over_existing(entry, &opened).await;
+        }
+        if registry.entries.iter().any(|entry| {
+            entry.summary.id.as_str() == opened.identity_id && entry.summary.did != did
+        }) {
+            return Err(crate::ImError::IdentityBindingConflict {
+                detail: "local identity ID is already bound to another DID".to_owned(),
+            });
+        }
+        self.install_identity_backup(&opened, did).await
+    }
+
+    async fn import_identity_backup_over_existing(
+        &self,
+        entry: &RegistryEntry,
+        opened: &crate::internal::identity_backup::OpenedIdentityBackup,
+    ) -> crate::ImResult<super::IdentityImportResult> {
+        if entry.identity_custody_backend.as_deref() != Some("anp_identity") {
+            return Err(crate::ImError::IdentityBindingConflict {
+                detail: "an existing local identity uses this DID outside ANP custody".to_owned(),
+            });
+        }
+        let session = open_registry_provider_session(self.core, entry).await?;
+        let public = session
+            .public_identity()
+            .await
+            .map_err(crate::internal::identity_provider::map_provider_error)?;
+        verify_imported_backup_identity(&public, opened)?;
+        Ok(super::IdentityImportResult {
+            identity_id: entry.summary.id.clone(),
+            did: entry.summary.did.clone(),
+            root_key_id: opened.root_key_id.clone(),
+            already_present: true,
+        })
+    }
+
+    async fn install_identity_backup(
+        &self,
+        opened: &crate::internal::identity_backup::OpenedIdentityBackup,
+        did: crate::ids::Did,
+    ) -> crate::ImResult<super::IdentityImportResult> {
+        let custody =
+            crate::internal::identity_custody::controller_custody_provider(self.core).await?;
+        let existing = custody
+            .list_identities()
+            .await
+            .map_err(crate::internal::identity_provider::map_provider_error)?
+            .into_iter()
+            .find(|descriptor| descriptor.reference.did == opened.did);
+        let session = match existing {
+            Some(descriptor) => custody
+                .open_identity(&descriptor.reference)
+                .await
+                .map_err(crate::internal::identity_provider::map_provider_error)?,
+            None => custody
+                .import_identity_material(
+                    crate::internal::identity_provider::ProviderIdentityMaterialImportRequest {
+                        remote: crate::internal::identity_custody::provider_verified_remote(
+                            opened.did_document.clone(),
+                        )?,
+                        did_wba: false,
+                        keys: vec![backup_root_material_key(opened)?],
+                        request_id: format!("identity-backup-import:{}", opened.identity_id),
+                    },
+                )
+                .await
+                .map_err(crate::internal::identity_provider::map_provider_error)?,
+        };
+        let public = session
+            .public_identity()
+            .await
+            .map_err(crate::internal::identity_provider::map_provider_error)?;
+        verify_imported_backup_identity(&public, opened)?;
+        let identity_id = crate::ids::IdentityId::parse(&opened.identity_id).map_err(|_| {
+            crate::ImError::IdentityBackup {
+                failure: crate::error::IdentityBackupFailure::PayloadInvalid,
+            }
+        })?;
+        let store = crate::internal::identity_store::IdentityStore::new(
+            &self.core.inner().sdk_paths().identities,
+        );
+        store.save_anp_identity_projection(
+            crate::internal::identity_store::SaveIdentityInput {
+                local_alias: opened.credential_name.clone(),
+                did: did.clone(),
+                unique_id: opened.identity_id.clone(),
+                user_id: String::new(),
+                display_name: opened.credential_name.clone(),
+                handle: opened
+                    .handle
+                    .clone()
+                    .or_else(|| opened.full_handle.clone())
+                    .unwrap_or_default(),
+                full_handle: String::new(),
+                binding_generation: None,
+                jwt_token: String::new(),
+                did_document: Some(opened.did_document.clone()),
+                key_mode: crate::internal::identity_store::SaveIdentityKeyMode::VNext {
+                    root_key_id: Some(opened.root_key_id.clone()),
+                    device_signing_key_id: String::new(),
+                    device_e2ee_key_id: String::new(),
+                },
+                device_state: None,
+                key1_private_pem: String::new(),
+                key1_public_pem: String::new(),
+                e2ee_signing_private_pem: String::new(),
+                e2ee_agreement_private_pem: String::new(),
+                daemon_subkey_package: None,
+                make_default: true,
+            },
+            crate::internal::identity_store::AnpIdentityProjectionStorage::from_core_pending_auth(
+                self.core,
+                public.reference.store_id.clone(),
+                public.reference.identity_id.clone(),
+            )?,
+        )?;
+        Ok(super::IdentityImportResult {
+            identity_id,
+            did,
+            root_key_id: opened.root_key_id.clone(),
+            already_present: false,
+        })
+    }
+
     fn backup_material_for_entry(
         &self,
         entry: &RegistryEntry,
@@ -2595,6 +2791,9 @@ impl IdentityRegistry<'_> {
         local_key_state: Option<(bool, Option<String>)>,
     ) -> crate::ImResult<super::IdentityDeviceSummary> {
         let Some(state) = entry.device_state.as_ref() else {
+            let root_only = entry.identity_custody_backend.as_deref() == Some("anp_identity")
+                && entry.anp_identity_store_id.is_some()
+                && entry.anp_identity_id.is_some();
             return Ok(super::IdentityDeviceSummary {
                 identity: entry.summary.clone(),
                 mode: super::IdentityDeviceMode::Legacy,
@@ -2602,7 +2801,11 @@ impl IdentityRegistry<'_> {
                 role: None,
                 signing_key_id: None,
                 e2ee_key_id: None,
-                readiness: super::IdentityDeviceReadiness::Legacy,
+                readiness: if root_only {
+                    super::IdentityDeviceReadiness::RootOnly
+                } else {
+                    super::IdentityDeviceReadiness::Legacy
+                },
                 blocked_reason: None,
             });
         };
@@ -3171,6 +3374,50 @@ async fn open_registry_provider_session(
         identity: reference.did,
         missing: vec!["external_identity_provider".to_owned()],
     })
+}
+
+fn invalid_backup_payload() -> crate::ImError {
+    crate::ImError::IdentityBackup {
+        failure: crate::error::IdentityBackupFailure::PayloadInvalid,
+    }
+}
+
+fn backup_root_material_key(
+    opened: &crate::internal::identity_backup::OpenedIdentityBackup,
+) -> crate::ImResult<crate::internal::identity_provider::ProviderIdentityMaterialKey> {
+    let material = anp::PrivateKeyMaterial::from_pem(opened.root_private_pem.as_str())
+        .map_err(|_| invalid_backup_payload())?;
+    let raw = match material {
+        anp::PrivateKeyMaterial::Ed25519(key) => key.to_bytes().to_vec(),
+        _ => return Err(crate::ImError::IdentityBackup {
+            failure: crate::error::IdentityBackupFailure::UnsupportedCustody,
+        }),
+    };
+    Ok(
+        crate::internal::identity_provider::ProviderIdentityMaterialKey {
+            kid: opened.root_key_id.clone(),
+            purpose: crate::internal::identity_provider::ProviderKeyPurpose::RootControl,
+            encoding: crate::internal::identity_provider::ProviderPrivateKeyEncoding::Raw32,
+            secret: Zeroizing::new(raw),
+        },
+    )
+}
+
+fn verify_imported_backup_identity(
+    public: &crate::internal::identity_provider::ProviderPublicIdentity,
+    opened: &crate::internal::identity_backup::OpenedIdentityBackup,
+) -> crate::ImResult<()> {
+    let expected = crate::internal::identity_wire::document::document_hash(&opened.did_document)?;
+    let actual = crate::internal::identity_wire::document::document_hash(&public.document)?;
+    if public.state != crate::internal::identity_provider::ProviderIdentityState::Active
+        || public.reference.did != opened.did
+        || actual != expected
+    {
+        return Err(crate::ImError::IdentityBindingConflict {
+            detail: "identity provider did not return the expected active identity".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(feature = "identity-native-anp")]
@@ -5709,6 +5956,213 @@ mod tests {
             .decode(lines[1])
             .unwrap();
         assert_eq!(der, expected_root.as_pkcs8_der());
+    }
+
+    fn exported_anp_root_backup(
+        passphrase: &str,
+    ) -> (
+        tempfile::TempDir,
+        crate::identity::IdentityBackupPackage,
+        String,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        let vault_dir = root.path().join("vault");
+        std::fs::create_dir_all(paths.identities.identity_root_dir.join("alice-id")).unwrap();
+        let mut manager =
+            anp_identity::IdentityManager::initialize(anp_identity::IdentityManagerConfig {
+                state_root: paths.identities.identity_root_dir.join(".anp-identity"),
+                root_key: anp_identity::RootKeySource::Injected(
+                    anp_identity::InjectedStoreKey::new(
+                        "awiki-workspace-vault:workspace-a",
+                        [62_u8; 32],
+                    ),
+                ),
+            })
+            .unwrap();
+        let identity = manager.create(anp_identity_spec("backup-import")).unwrap();
+        let public = identity.public_identity().unwrap();
+        let reference = public.reference.clone();
+        let did_document = public.document.into_value();
+        crate::internal::identity_store::IdentityStore::new(&paths.identities)
+            .save_did_document("alice-id", &did_document)
+            .unwrap();
+        write_anp_identity_registry(
+            &paths.identities.registry_path,
+            &reference.did,
+            &reference.store_id,
+            &reference.identity_id,
+            None,
+        );
+        let core = crate::ImCore::new_with_options(
+            test_config(),
+            paths,
+            crate::ImCoreOpenOptions::default().with_identity_secret_vault(
+                crate::IdentitySecretStoragePolicy::VaultRequired,
+                crate::ImCoreSecretVaultOptions::new(
+                    DeviceVaultRootKey::from_bytes([62_u8; 32]),
+                    &vault_dir,
+                    "workspace-a",
+                    "device-a",
+                ),
+            ),
+        )
+        .unwrap();
+        let package = core
+            .identities()
+            .export_identity_backup(crate::identity::IdentitySelector::Default, passphrase)
+            .unwrap();
+        (root, package, reference.did)
+    }
+
+    #[test]
+    fn identity_backup_inspection_rejects_a_wrong_passphrase_without_state_changes() {
+        let passphrase = "correct horse battery";
+        let (_source, package, _) = exported_anp_root_backup(passphrase);
+        let target_root = tempfile::tempdir().unwrap();
+        let target = crate::ImCore::new(test_config(), test_paths(target_root.path())).unwrap();
+
+        let err = target
+            .identities()
+            .inspect_identity_backup(&package.bytes, "wrong horse battery")
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            crate::ImError::IdentityBackup {
+                failure: crate::IdentityBackupFailure::BadPassphrase
+            }
+        ));
+        assert!(target.identities().list().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn identity_backup_import_requires_user_presence_before_state_changes() {
+        let passphrase = "correct horse battery";
+        let (_source, package, _) = exported_anp_root_backup(passphrase);
+        let target_root = tempfile::tempdir().unwrap();
+        let target = crate::ImCore::new(test_config(), test_paths(target_root.path())).unwrap();
+
+        let err = target
+            .identities()
+            .import_identity_backup(&package.bytes, passphrase, false)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, crate::ImError::PermissionDenied));
+        assert!(target.identities().list().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn identity_backup_import_installs_a_root_only_identity_and_is_idempotent() {
+        let passphrase = "correct horse battery";
+        let (_source, package, source_did) = exported_anp_root_backup(passphrase);
+        let target_root = tempfile::tempdir().unwrap();
+        let target = crate::ImCore::new(test_config(), test_paths(target_root.path())).unwrap();
+
+        let inspection = target
+            .identities()
+            .inspect_identity_backup(&package.bytes, passphrase)
+            .unwrap();
+        assert_eq!(inspection.did, source_did);
+        assert_eq!(inspection.handle.as_deref(), Some("alice.example.com"));
+        assert_eq!(inspection.full_handle.as_deref(), Some("alice.example.com"));
+        assert_eq!(inspection.display_name, "alice");
+        assert_eq!(inspection.custody, "anp_root");
+        assert_eq!(inspection.key_kinds, vec!["did_document_root".to_owned()]);
+        assert!(inspection.has_did_document);
+        assert!(target.identities().list().unwrap().is_empty());
+
+        let imported = target
+            .identities()
+            .import_identity_backup(&package.bytes, passphrase, true)
+            .await
+            .unwrap();
+        assert!(!imported.already_present);
+        assert_eq!(imported.identity_id.as_str(), "alice-id");
+        assert_eq!(imported.did.as_str(), source_did);
+
+        let list = target.identities().list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].did.as_str(), source_did);
+        assert!(list[0].is_default);
+        assert_eq!(
+            target
+                .identities()
+                .device_summary(crate::identity::IdentitySelector::Default)
+                .unwrap()
+                .readiness,
+            crate::identity::IdentityDeviceReadiness::RootOnly
+        );
+        let custody = target
+            .identities()
+            .custody_status_async(crate::identity::IdentitySelector::Default)
+            .await
+            .unwrap();
+        assert!(custody.ready);
+        assert!(custody.root_control_available);
+        assert_eq!(
+            custody.backend,
+            crate::identity::IdentityCustodyBackend::AnpIdentity
+        );
+
+        let runtime = target
+            .identities()
+            .load_runtime_async(crate::identity::IdentitySelector::Default)
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.key_provider.did_document().unwrap()["id"],
+            source_did.as_str()
+        );
+        assert_eq!(runtime.key_provider.valid_auth_token().unwrap(), None);
+
+        let repeated = target
+            .identities()
+            .import_identity_backup(&package.bytes, passphrase, true)
+            .await
+            .unwrap();
+        assert!(repeated.already_present);
+        assert_eq!(repeated.identity_id, imported.identity_id);
+        assert_eq!(repeated.did, imported.did);
+        assert_eq!(target.identities().list().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn identity_backup_import_completes_the_projection_after_a_partial_install() {
+        let passphrase = "correct horse battery";
+        let (_source, package, source_did) = exported_anp_root_backup(passphrase);
+        let target_root = tempfile::tempdir().unwrap();
+        let target_paths = test_paths(target_root.path());
+        let target = crate::ImCore::new(test_config(), target_paths.clone()).unwrap();
+
+        let first = target
+            .identities()
+            .import_identity_backup(&package.bytes, passphrase, true)
+            .await
+            .unwrap();
+        assert!(!first.already_present);
+        std::fs::remove_file(&target_paths.identities.registry_path).unwrap();
+        assert!(target.identities().list().unwrap().is_empty());
+
+        let recovered = target
+            .identities()
+            .import_identity_backup(&package.bytes, passphrase, true)
+            .await
+            .unwrap();
+
+        assert!(!recovered.already_present);
+        assert_eq!(recovered.identity_id, first.identity_id);
+        assert_eq!(recovered.did.as_str(), source_did);
+        assert_eq!(
+            target
+                .identities()
+                .device_summary(crate::identity::IdentitySelector::Default)
+                .unwrap()
+                .readiness,
+            crate::identity::IdentityDeviceReadiness::RootOnly
+        );
+        assert_eq!(target.identities().list().unwrap().len(), 1);
     }
 
     #[tokio::test]

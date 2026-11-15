@@ -1206,6 +1206,7 @@ impl Probe {
         };
         let device_readiness = match device_summary.readiness {
             IdentityDeviceReadiness::Legacy => "legacy",
+            IdentityDeviceReadiness::RootOnly => "root_only",
             IdentityDeviceReadiness::MemberReady => "member_ready",
             IdentityDeviceReadiness::AdminAwaitingRoot => "admin_awaiting_root",
             IdentityDeviceReadiness::AdminReady => "admin_ready",
@@ -1213,7 +1214,7 @@ impl Probe {
         };
         let local_root_state = if matches!(
             device_summary.readiness,
-            IdentityDeviceReadiness::AdminReady
+            IdentityDeviceReadiness::AdminReady | IdentityDeviceReadiness::RootOnly
         ) {
             "active"
         } else {

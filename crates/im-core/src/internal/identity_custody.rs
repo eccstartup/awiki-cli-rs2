@@ -3148,7 +3148,7 @@ pub(crate) async fn provider_registration_session(
 }
 
 #[cfg(feature = "provider-traits")]
-fn provider_verified_remote(
+pub(crate) fn provider_verified_remote(
     document: serde_json::Value,
 ) -> crate::ImResult<crate::internal::identity_provider::ProviderVerifiedRemoteDocument> {
     let document_digest = crate::internal::identity_wire::document::document_hash(&document)?;

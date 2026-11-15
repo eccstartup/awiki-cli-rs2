@@ -8,6 +8,7 @@ import '../dto/error.dart';
 import '../dto/profile.dart';
 import '../frb_generated.dart';
 import 'attachments.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 Future<DartUserProfile> setAvatar({

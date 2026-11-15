@@ -7,6 +7,7 @@ import '../dto/error.dart';
 import '../dto/secure.dart';
 import '../frb_generated.dart';
 import 'attachments.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 Future<DartDirectSecureStatus> secureDirectStatus({

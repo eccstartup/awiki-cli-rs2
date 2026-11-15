@@ -3,7 +3,7 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use rand::rngs::OsRng;
 use rand::RngCore;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 pub(crate) const BACKUP_MAGIC: &[u8; 8] = b"AWIKIBK1";
@@ -11,6 +11,9 @@ pub(crate) const BACKUP_FILE_EXTENSION: &str = "awiki-backup";
 pub(crate) const BACKUP_MIME_TYPE: &str = "application/vnd.awiki.identity-backup";
 pub(crate) const BACKUP_PASSPHRASE_MIN_BYTES: usize = 8;
 pub(crate) const BACKUP_PASSPHRASE_MAX_BYTES: usize = 1024;
+/// A backup container bigger than this is rejected before any KDF work runs.
+pub(crate) const BACKUP_MAX_BYTES: usize = 1024 * 1024;
+pub(crate) const BACKUP_ANP_ROOT_CUSTODY: &str = "anp_root";
 
 const BACKUP_VERSION: u16 = 1;
 const HEADER_LEN: usize = 64;
@@ -37,6 +40,65 @@ pub(crate) struct IdentityBackupMaterial {
     pub(crate) did_document_root_private_pem: Option<Zeroizing<String>>,
     pub(crate) e2ee_signing_private_pem: Option<Zeroizing<String>>,
     pub(crate) e2ee_agreement_private_pem: Option<Zeroizing<String>>,
+}
+
+/// A fully validated ANP-custody backup payload. Only root-only backups are
+/// accepted here: the importer installs the root key and DID document, never
+/// device keys.
+pub(crate) struct OpenedIdentityBackup {
+    pub(crate) identity_id: String,
+    pub(crate) did: String,
+    pub(crate) handle: Option<String>,
+    pub(crate) full_handle: Option<String>,
+    pub(crate) credential_name: String,
+    pub(crate) created_at: Option<String>,
+    pub(crate) exported_at: String,
+    pub(crate) core_version: String,
+    pub(crate) root_key_id: String,
+    pub(crate) did_document: serde_json::Value,
+    pub(crate) root_private_pem: Zeroizing<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenedPayload {
+    identity: OpenedIdentity,
+    keys: OpenedKeys,
+    #[serde(default)]
+    did_document: Option<serde_json::Value>,
+    #[serde(default)]
+    metadata: Option<OpenedMetadata>,
+}
+
+#[derive(Deserialize)]
+struct OpenedIdentity {
+    local_identity_id: String,
+    did: String,
+    #[serde(default)]
+    handle: Option<String>,
+    #[serde(default)]
+    full_handle: Option<String>,
+    credential_name: String,
+    #[serde(default)]
+    created_at: Option<String>,
+    custody: String,
+}
+
+#[derive(Deserialize)]
+struct OpenedKeys {
+    #[serde(default)]
+    signing_private_pem: Option<String>,
+    #[serde(default)]
+    did_document_root_private_pem: Option<String>,
+    #[serde(default)]
+    e2ee_signing_private_pem: Option<String>,
+    #[serde(default)]
+    e2ee_agreement_private_pem: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenedMetadata {
+    exported_at: String,
+    core_version: String,
 }
 
 const ED25519_PKCS8_PREFIX: [u8; 16] = [
@@ -322,29 +384,28 @@ pub(crate) fn backup_file_name(
     )
 }
 
-#[cfg(test)]
+fn backup_failure(failure: crate::error::IdentityBackupFailure) -> crate::ImError {
+    crate::ImError::IdentityBackup { failure }
+}
+
+/// Decrypts a sealed container and returns the plaintext payload bytes.
 pub(crate) fn open_identity_backup(
     container: &[u8],
     passphrase: &str,
 ) -> crate::ImResult<Zeroizing<Vec<u8>>> {
+    use crate::error::IdentityBackupFailure;
+    if container.len() > BACKUP_MAX_BYTES {
+        return Err(backup_failure(IdentityBackupFailure::TooLarge));
+    }
     if container.len() < HEADER_LEN {
-        return Err(crate::ImError::invalid_input(
-            None,
-            "identity backup container is truncated",
-        ));
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
     }
     let header = &container[..HEADER_LEN];
     if &header[0..8] != BACKUP_MAGIC {
-        return Err(crate::ImError::invalid_input(
-            None,
-            "identity backup magic is invalid",
-        ));
+        return Err(backup_failure(IdentityBackupFailure::BadMagic));
     }
     if u16::from_le_bytes([header[8], header[9]]) != BACKUP_VERSION {
-        return Err(crate::ImError::invalid_input(
-            None,
-            "identity backup version is unsupported",
-        ));
+        return Err(backup_failure(IdentityBackupFailure::UnsupportedVersion));
     }
     if usize::from(u16::from_le_bytes([header[10], header[11]])) != HEADER_LEN
         || header[12] != KDF_ID_ARGON2ID
@@ -352,28 +413,20 @@ pub(crate) fn open_identity_backup(
         || header[14] != 0
         || header[15] != 0
     {
-        return Err(crate::ImError::invalid_input(
-            None,
-            "identity backup header is unsupported",
-        ));
+        return Err(backup_failure(IdentityBackupFailure::UnsupportedVersion));
     }
     let ciphertext_len = u64::from_le_bytes(
         header[56..64]
             .try_into()
-            .map_err(|_| crate::ImError::invalid_input(None, "identity backup length is invalid"))?,
+            .map_err(|_| backup_failure(IdentityBackupFailure::PayloadInvalid))?,
     ) as usize;
     if ciphertext_len
         != container
             .len()
             .checked_sub(HEADER_LEN)
-            .ok_or_else(|| {
-                crate::ImError::invalid_input(None, "identity backup length is invalid")
-            })?
+            .ok_or_else(|| backup_failure(IdentityBackupFailure::PayloadInvalid))?
     {
-        return Err(crate::ImError::invalid_input(
-            None,
-            "identity backup length does not match its header",
-        ));
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
     }
     let mut salt = [0_u8; SALT_LEN];
     salt.copy_from_slice(&header[16..32]);
@@ -393,16 +446,112 @@ pub(crate) fn open_identity_backup(
                 aad: &header[..AAD_LEN],
             },
         )
-        .map_err(|_| {
-            crate::ImError::invalid_input(None, "identity backup authentication failed")
-        })?;
+        .map_err(|_| backup_failure(IdentityBackupFailure::BadPassphrase))?;
     key.zeroize();
     Ok(Zeroizing::new(plaintext))
+}
+
+/// Decrypts and validates an identity backup without touching Core state.
+pub(crate) fn inspect_identity_backup(
+    container: &[u8],
+    passphrase: &str,
+) -> crate::ImResult<OpenedIdentityBackup> {
+    if container.len() > BACKUP_MAX_BYTES {
+        return Err(backup_failure(
+            crate::error::IdentityBackupFailure::TooLarge,
+        ));
+    }
+    let plaintext = open_identity_backup(container, passphrase)?;
+    parse_identity_backup_payload(plaintext.as_slice())
+}
+
+fn parse_identity_backup_payload(
+    plaintext: &[u8],
+) -> crate::ImResult<OpenedIdentityBackup> {
+    use crate::error::IdentityBackupFailure;
+    let value: serde_json::Value = serde_json::from_slice(plaintext)
+        .map_err(|_| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some(BACKUP_PAYLOAD_SCHEMA) {
+        return Err(backup_failure(IdentityBackupFailure::UnsupportedVersion));
+    }
+    let payload: OpenedPayload = serde_json::from_value(value)
+        .map_err(|_| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    let identity = payload.identity;
+    if identity.custody != BACKUP_ANP_ROOT_CUSTODY {
+        return Err(backup_failure(IdentityBackupFailure::UnsupportedCustody));
+    }
+    if !identity.did.starts_with("did:wba:")
+        || identity.did.trim() != identity.did
+        || identity.local_identity_id.trim().is_empty()
+        || identity.credential_name.trim().is_empty()
+    {
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
+    }
+    let keys = payload.keys;
+    if keys.signing_private_pem.is_some()
+        || keys.e2ee_signing_private_pem.is_some()
+        || keys.e2ee_agreement_private_pem.is_some()
+    {
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
+    }
+    let root_private_pem = keys
+        .did_document_root_private_pem
+        .ok_or_else(|| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    let did_document = payload
+        .did_document
+        .filter(serde_json::Value::is_object)
+        .ok_or_else(|| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    if did_document.get("id").and_then(serde_json::Value::as_str)
+        != Some(identity.did.as_str())
+    {
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
+    }
+    let root_key_id = did_document
+        .get("proof")
+        .and_then(|proof| proof.get("verificationMethod"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    let metadata = payload
+        .metadata
+        .ok_or_else(|| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    if metadata.exported_at.trim().is_empty() || metadata.core_version.trim().is_empty() {
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
+    }
+    let root_private_pem = Zeroizing::new(root_private_pem);
+    let material = anp::PrivateKeyMaterial::from_pem(&root_private_pem)
+        .map_err(|_| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    if !matches!(material, anp::PrivateKeyMaterial::Ed25519(_)) {
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
+    }
+    let method = anp::authentication::find_verification_method(&did_document, &root_key_id)
+        .ok_or_else(|| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    let expected = anp::authentication::extract_public_key(&method)
+        .map_err(|_| backup_failure(IdentityBackupFailure::PayloadInvalid))?;
+    if material.public_key().to_pem() != expected.to_pem() {
+        return Err(backup_failure(IdentityBackupFailure::PayloadInvalid));
+    }
+    Ok(OpenedIdentityBackup {
+        identity_id: identity.local_identity_id,
+        did: identity.did,
+        handle: identity.handle,
+        full_handle: identity.full_handle,
+        credential_name: identity.credential_name,
+        created_at: identity.created_at,
+        exported_at: metadata.exported_at,
+        core_version: metadata.core_version,
+        root_key_id,
+        did_document,
+        root_private_pem,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
 
     fn material() -> IdentityBackupMaterial {
         IdentityBackupMaterial {
@@ -548,6 +697,209 @@ mod tests {
         let mut der = ED25519_PKCS8_PREFIX.to_vec();
         der.extend_from_slice(&[7_u8; 32]);
         der
+    }
+
+    fn anp_root_material() -> IdentityBackupMaterial {
+        let pem = pem_encode_ed25519_pkcs8(&ed25519_pkcs8_der()).expect("pem");
+        let public = anp::PrivateKeyMaterial::from_pem(&pem)
+            .expect("key")
+            .public_key();
+        let anp::PublicKeyMaterial::Ed25519(verifying) = public else {
+            panic!("expected ed25519 public key");
+        };
+        let x = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(verifying.to_bytes());
+        let did = "did:wba:awiki.ai:user:alice:e1_test";
+        let kid = format!("{did}#key-1");
+        let document = serde_json::json!({
+            "id": did,
+            "verificationMethod": [{
+                "id": kid,
+                "type": "JsonWebKey2020",
+                "controller": did,
+                "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": x},
+            }],
+            "authentication": [kid],
+            "proof": {
+                "type": "DataIntegrityProof",
+                "verificationMethod": kid,
+            },
+        });
+        let mut material = material();
+        material.identity_id = "identity-anp".to_owned();
+        material.did = did.to_owned();
+        material.handle = Some("alice".to_owned());
+        material.full_handle = Some("alice".to_owned());
+        material.credential_name = "alice".to_owned();
+        material.custody = BACKUP_ANP_ROOT_CUSTODY;
+        material.did_document = Some(document);
+        material.signing_private_pem = None;
+        material.e2ee_signing_private_pem = None;
+        material.e2ee_agreement_private_pem = None;
+        material.did_document_root_private_pem = Some(pem);
+        material
+    }
+
+    fn seal_anp_root() -> Vec<u8> {
+        seal_identity_backup(
+            &anp_root_material(),
+            "correct horse battery",
+            "2026-11-15T00:00:00Z".to_owned(),
+        )
+        .expect("seal")
+    }
+
+    fn failure_code<T>(result: crate::ImResult<T>) -> Option<&'static str> {
+        match result {
+            Err(crate::ImError::IdentityBackup { failure }) => Some(failure.code()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn inspection_returns_the_anp_root_summary() {
+        let container = seal_anp_root();
+        let opened = inspect_identity_backup(&container, "correct horse battery").expect("inspect");
+        assert_eq!(opened.identity_id, "identity-anp");
+        assert_eq!(opened.did, "did:wba:awiki.ai:user:alice:e1_test");
+        assert_eq!(opened.handle.as_deref(), Some("alice"));
+        assert_eq!(opened.full_handle.as_deref(), Some("alice"));
+        assert_eq!(opened.credential_name, "alice");
+        assert_eq!(
+            opened.root_key_id,
+            "did:wba:awiki.ai:user:alice:e1_test#key-1"
+        );
+        assert_eq!(opened.exported_at, "2026-11-15T00:00:00Z");
+        assert_eq!(opened.did_document["id"], opened.did);
+    }
+
+    #[test]
+    fn inspection_rejects_wrong_passphrase_with_a_typed_code() {
+        let container = seal_anp_root();
+        assert_eq!(
+            failure_code(inspect_identity_backup(&container, "wrong passphrase")),
+            Some("identity_backup_bad_passphrase")
+        );
+    }
+
+    #[test]
+    fn inspection_rejects_bad_magic_truncation_and_version() {
+        let container = seal_anp_root();
+
+        let mut bad_magic = container.clone();
+        bad_magic[0] = b'B';
+        assert_eq!(
+            failure_code(inspect_identity_backup(&bad_magic, "correct horse battery")),
+            Some("identity_backup_bad_magic")
+        );
+
+        assert_eq!(
+            failure_code(inspect_identity_backup(
+                &container[..HEADER_LEN - 1],
+                "correct horse battery"
+            )),
+            Some("identity_backup_payload_invalid")
+        );
+
+        let mut bad_version = container.clone();
+        bad_version[8] = 9;
+        assert_eq!(
+            failure_code(inspect_identity_backup(
+                &bad_version,
+                "correct horse battery"
+            )),
+            Some("identity_backup_unsupported_version")
+        );
+
+        let mut bad_length = container.clone();
+        bad_length[56] ^= 0x01;
+        assert_eq!(
+            failure_code(inspect_identity_backup(
+                &bad_length,
+                "correct horse battery"
+            )),
+            Some("identity_backup_payload_invalid")
+        );
+    }
+
+    #[test]
+    fn inspection_rejects_oversized_containers_before_kdf_work() {
+        let oversized = vec![0_u8; BACKUP_MAX_BYTES + 1];
+        assert_eq!(
+            failure_code(inspect_identity_backup(&oversized, "correct horse battery")),
+            Some("identity_backup_too_large")
+        );
+    }
+
+    #[test]
+    fn inspection_rejects_non_anp_custody() {
+        let container = seal();
+        assert_eq!(
+            failure_code(inspect_identity_backup(&container, "correct horse battery")),
+            Some("identity_backup_unsupported_custody")
+        );
+    }
+
+    #[test]
+    fn inspection_rejects_anp_backups_carrying_device_keys() {
+        let mut material = anp_root_material();
+        material.signing_private_pem = Some(Zeroizing::new(
+            "-----BEGIN PRIVATE KEY-----\nsigning\n-----END PRIVATE KEY-----\n".to_owned(),
+        ));
+        let container = seal_identity_backup(
+            &material,
+            "correct horse battery",
+            "2026-11-15T00:00:00Z".to_owned(),
+        )
+        .expect("seal");
+        assert_eq!(
+            failure_code(inspect_identity_backup(&container, "correct horse battery")),
+            Some("identity_backup_payload_invalid")
+        );
+    }
+
+    #[test]
+    fn inspection_rejects_a_root_key_that_does_not_match_its_document() {
+        let mut material = anp_root_material();
+        let mut document = material.did_document.clone().expect("document");
+        let mut der = ED25519_PKCS8_PREFIX.to_vec();
+        der.extend_from_slice(&[9_u8; 32]);
+        let other = anp::PrivateKeyMaterial::from_pem(
+            &pem_encode_ed25519_pkcs8(&der).expect("pem"),
+        )
+        .expect("key")
+        .public_key();
+        let anp::PublicKeyMaterial::Ed25519(verifying) = other else {
+            panic!("expected ed25519 public key");
+        };
+        document["verificationMethod"][0]["publicKeyJwk"]["x"] = serde_json::Value::String(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying.to_bytes()),
+        );
+        material.did_document = Some(document);
+        let container = seal_identity_backup(
+            &material,
+            "correct horse battery",
+            "2026-11-15T00:00:00Z".to_owned(),
+        )
+        .expect("seal");
+        assert_eq!(
+            failure_code(inspect_identity_backup(&container, "correct horse battery")),
+            Some("identity_backup_payload_invalid")
+        );
+    }
+
+    #[test]
+    fn payload_schema_mismatch_is_an_unsupported_version() {
+        let payload = serde_json::json!({
+            "schema": "awiki.identity-backup.v2",
+            "identity": {},
+            "keys": {},
+        });
+        let bytes = serde_json::to_vec(&payload).expect("json");
+        assert_eq!(
+            failure_code(parse_identity_backup_payload(&bytes)),
+            Some("identity_backup_unsupported_version")
+        );
     }
 
     #[test]

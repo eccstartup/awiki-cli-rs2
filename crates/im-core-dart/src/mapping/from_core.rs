@@ -636,6 +636,9 @@ impl From<im_core::identity::IdentityDeviceSummary> for DartIdentityDeviceSummar
                 im_core::identity::IdentityDeviceReadiness::Legacy => {
                     DartIdentityDeviceReadiness::Legacy
                 }
+                im_core::identity::IdentityDeviceReadiness::RootOnly => {
+                    DartIdentityDeviceReadiness::RootOnly
+                }
                 im_core::identity::IdentityDeviceReadiness::MemberReady => {
                     DartIdentityDeviceReadiness::MemberReady
                 }

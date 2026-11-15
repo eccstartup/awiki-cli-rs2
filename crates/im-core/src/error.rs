@@ -21,6 +21,17 @@ pub enum IdentityVaultFailure {
     VerificationFailed,
 }
 
+/// Stable, redacted reasons why an identity backup container cannot be opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityBackupFailure {
+    BadMagic,
+    UnsupportedVersion,
+    BadPassphrase,
+    UnsupportedCustody,
+    PayloadInvalid,
+    TooLarge,
+}
+
 /// Stable attachment transfer failures exposed to every SDK surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentTransferFailure {
@@ -77,6 +88,19 @@ impl IdentityVaultFailure {
     }
 }
 
+impl IdentityBackupFailure {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::BadMagic => "identity_backup_bad_magic",
+            Self::UnsupportedVersion => "identity_backup_unsupported_version",
+            Self::BadPassphrase => "identity_backup_bad_passphrase",
+            Self::UnsupportedCustody => "identity_backup_unsupported_custody",
+            Self::PayloadInvalid => "identity_backup_payload_invalid",
+            Self::TooLarge => "identity_backup_too_large",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImError {
     InvalidInput {
@@ -94,6 +118,9 @@ pub enum ImError {
     },
     IdentityVault {
         failure: IdentityVaultFailure,
+    },
+    IdentityBackup {
+        failure: IdentityBackupFailure,
     },
     AuthRequired,
     SessionExpired,
@@ -235,6 +262,9 @@ impl fmt::Display for ImError {
             }
             Self::IdentityVault { failure } => {
                 write!(f, "identity vault failure: {}", failure.code())
+            }
+            Self::IdentityBackup { failure } => {
+                write!(f, "identity backup failure: {}", failure.code())
             }
             Self::AuthRequired => f.write_str("authentication is required"),
             Self::SessionExpired => f.write_str("session expired"),

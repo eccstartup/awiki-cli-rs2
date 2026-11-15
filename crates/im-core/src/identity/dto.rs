@@ -71,6 +71,9 @@ impl AgentIdentityKind {
 #[serde(rename_all = "snake_case")]
 pub enum IdentityDeviceReadiness {
     Legacy,
+    /// ANP custody identity installed from an identity backup: it owns the DID
+    /// root capability but carries no protocol device binding yet.
+    RootOnly,
     MemberReady,
     AdminAwaitingRoot,
     AdminReady,
@@ -776,6 +779,31 @@ pub struct IdentityBackupPackage {
     pub file_name: String,
     pub mime_type: String,
     pub bytes: Vec<u8>,
+}
+
+/// Secret-free summary of an identity backup that decrypted and validated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityBackupInspection {
+    pub did: String,
+    pub handle: Option<String>,
+    pub full_handle: Option<String>,
+    pub display_name: String,
+    pub custody: String,
+    pub created_at: Option<String>,
+    pub exported_at: String,
+    pub source_core_version: String,
+    pub key_kinds: Vec<String>,
+    pub has_did_document: bool,
+}
+
+/// Result of installing the identity material carried by a backup. Messages,
+/// conversations and contacts are never restored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityImportResult {
+    pub identity_id: crate::ids::IdentityId,
+    pub did: crate::ids::Did,
+    pub root_key_id: String,
+    pub already_present: bool,
 }
 
 /// Opaque, secret-free authority for one committed local identity data

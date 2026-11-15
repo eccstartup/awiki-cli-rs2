@@ -521,6 +521,59 @@ class AwikiImCore {
     );
   }
 
+  /// Decrypts and validates one backup without changing local state.
+  ///
+  /// Core copies [bytes] and [passphrase] synchronously inside the native
+  /// call; callers should clear their own buffers when this future completes.
+  Future<IdentityBackupInspection> inspectIdentityBackup(
+    Uint8List bytes, {
+    required Uint8List passphrase,
+  }) async {
+    _ensureNotDisposed();
+    final value = await _mapNativeErrors(
+      () => gen_identity_api.inspectIdentityBackup(
+        core: _inner,
+        bytes: bytes,
+        passphrase: passphrase,
+      ),
+    );
+    return IdentityBackupInspection(
+      did: value.did,
+      handle: value.handle,
+      fullHandle: value.fullHandle,
+      displayName: value.displayName,
+      custody: value.custody,
+      createdAt: value.createdAt,
+      exportedAt: value.exportedAt,
+      sourceCoreVersion: value.sourceCoreVersion,
+      keyKinds: value.keyKinds,
+      hasDidDocument: value.hasDidDocument,
+    );
+  }
+
+  /// Installs identity material only; no messages or contacts are restored.
+  Future<IdentityImportResult> importIdentityBackup(
+    Uint8List bytes, {
+    required Uint8List passphrase,
+    required bool userPresenceConfirmed,
+  }) async {
+    _ensureNotDisposed();
+    final value = await _mapNativeErrors(
+      () => gen_identity_api.importIdentityBackup(
+        core: _inner,
+        bytes: bytes,
+        passphrase: passphrase,
+        userPresenceConfirmed: userPresenceConfirmed,
+      ),
+    );
+    return IdentityImportResult(
+      identityId: value.identityId,
+      did: value.did,
+      rootKeyId: value.rootKeyId,
+      alreadyPresent: value.alreadyPresent,
+    );
+  }
+
   Future<bool> identityServicesUpdatePending(IdentitySelector selector) async {
     _ensureNotDisposed();
     return _mapNativeErrors(
@@ -2942,6 +2995,8 @@ extension on gen_identity.DartIdentityDeviceSummary {
     readiness: switch (readiness) {
       gen_identity.DartIdentityDeviceReadiness.legacy =>
         IdentityDeviceReadiness.legacy,
+      gen_identity.DartIdentityDeviceReadiness.rootOnly =>
+        IdentityDeviceReadiness.rootOnly,
       gen_identity.DartIdentityDeviceReadiness.memberReady =>
         IdentityDeviceReadiness.memberReady,
       gen_identity.DartIdentityDeviceReadiness.adminAwaitingRoot =>

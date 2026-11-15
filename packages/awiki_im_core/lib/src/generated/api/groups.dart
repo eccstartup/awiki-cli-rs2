@@ -9,6 +9,7 @@ import '../dto/message.dart';
 import '../dto/secure.dart';
 import '../frb_generated.dart';
 import 'attachments.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `did_domain_for_client`, `identity_handle`, `mutate_group_member`, `page_limit`

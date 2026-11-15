@@ -50,7 +50,7 @@ pub use crate::directory::{DirectoryService, HandleLookupResult};
 pub use crate::email::EmailService;
 pub use crate::error::{
     AttachmentPreparationStage, AttachmentTransferFailure, DeviceRevokeOutcomeCategory,
-    IdentityVaultFailure, ImError, ImResult,
+    IdentityBackupFailure, IdentityVaultFailure, ImError, ImResult,
 };
 pub use crate::external_http_auth::{
     ExternalHttpAuthAttempt, ExternalHttpAuthDecision, ExternalHttpAuthService, ExternalHttpHeader,
@@ -60,8 +60,9 @@ pub use crate::groups::GroupService;
 pub use crate::identity::{
     ActiveSyncAccountBinding, AgentIdentityKind, DaemonSubkeyPublicPackage,
     DaemonSubkeyPublicProposal, DeleteLocalIdentityResult, HostBackedAuthTokenPersistence,
-    HostBackedDeviceIdentityMaterial, HostedIdentityMaterial, IdentityCustodyBackend,
-    IdentityCustodyMigrationIdentityReport, IdentityCustodyMigrationPhase,
+    HostBackedDeviceIdentityMaterial, HostedIdentityMaterial, IdentityBackupInspection,
+    IdentityCustodyBackend, IdentityCustodyMigrationIdentityReport,
+    IdentityCustodyMigrationPhase, IdentityImportResult,
     IdentityCustodyMigrationReport, IdentityCustodyState, IdentityCustodyStatus,
     IdentityDeviceAuthorizationStatus, IdentityDeviceRole, IdentitySecretStorageBackend,
     IdentitySelector, IdentitySummary, IdentityVaultMigrationReport, IdentityVaultStatus,

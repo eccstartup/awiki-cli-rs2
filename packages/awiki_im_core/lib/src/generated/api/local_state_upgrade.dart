@@ -7,6 +7,7 @@ import '../dto/config.dart';
 import '../dto/error.dart';
 import '../dto/local_state_upgrade.dart';
 import '../frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 Future<DartLocalStateUpgradeInspection> inspectLocalStateUpgrade({

@@ -54,6 +54,12 @@ pub fn map_im_error(err: im_core::ImError, context: &'static str) -> ExitError {
             format!("{context}: identity vault verification failed."),
             "Check the configured vault root key and workspace/device context; do not replace an existing vault key.",
         ),
+        im_core::ImError::IdentityBackup { failure } => ExitError::new(
+            failure.code(),
+            3,
+            format!("{context}: identity backup validation failed."),
+            "Check the backup file and passphrase; the backup container was not changed.",
+        ),
         im_core::ImError::SkillOnboarding {
             code,
             phase,
