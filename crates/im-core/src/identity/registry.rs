@@ -565,50 +565,148 @@ impl<'a> IdentityRegistry<'a> {
                 created_at,
                 custody,
                 did_document,
-                signing_private_pem,
+                signing_private_pem: Some(signing_private_pem),
                 did_document_root_private_pem,
                 e2ee_signing_private_pem,
-                e2ee_agreement_private_pem,
+                e2ee_agreement_private_pem: Some(e2ee_agreement_private_pem),
             });
         }
 
-        let Some(dir_name) = entry.identity_dir_name() else {
-            return Err(if has_anp_binding {
-                crate::ImError::UnsupportedCapability {
-                    capability: "identity_backup.custody_only".to_owned(),
-                }
+        let file_roles = match entry.identity_dir_name() {
+            Some(dir_name) => store.load_file_compat_backup_roles(&dir_name, has_anp_binding)?,
+            None => None,
+        };
+        if let Some(roles) = file_roles {
+            return Ok(crate::internal::identity_backup::IdentityBackupMaterial {
+                identity_id,
+                did: entry.summary.did.as_str().to_owned(),
+                handle,
+                full_handle,
+                credential_name,
+                created_at,
+                custody: if has_anp_binding { "vnext" } else { "legacy" },
+                did_document: roles.did_document,
+                signing_private_pem: Some(roles.signing_private_pem),
+                did_document_root_private_pem: roles.did_document_root_private_pem,
+                e2ee_signing_private_pem: roles.e2ee_signing_private_pem,
+                e2ee_agreement_private_pem: Some(roles.e2ee_agreement_private_pem),
+            });
+        }
+
+        if has_anp_binding {
+            let did_document = match entry.identity_dir_name() {
+                Some(dir_name) => store.load_optional_did_document(&dir_name)?,
+                None => None,
+            };
+            return self.anp_root_backup_material(
+                entry,
+                identity_id,
+                credential_name,
+                handle,
+                full_handle,
+                did_document,
+            );
+        }
+
+        Err(crate::ImError::IdentityNotReady {
+            identity: identity_id,
+            missing: vec![if entry.identity_dir_name().is_some() {
+                "identity_private_key"
             } else {
-                crate::ImError::IdentityNotReady {
-                    identity: identity_id,
-                    missing: vec!["identity_directory".to_owned()],
-                }
+                "identity_directory"
+            }
+            .to_owned()],
+        })
+    }
+
+    /// ANP-managed identities keep device signing and E2EE keys in
+    /// device-scoped custody that intentionally cannot be exported. The
+    /// root-control key is the identity authority a backup must preserve;
+    /// a new device re-enrolls its own keys. Joined devices without a local
+    /// root key stay `custody_only`.
+    #[cfg(feature = "identity-native-anp")]
+    fn anp_root_backup_material(
+        &self,
+        entry: &RegistryEntry,
+        identity_id: String,
+        credential_name: String,
+        handle: Option<String>,
+        full_handle: Option<String>,
+        did_document: Option<Value>,
+    ) -> crate::ImResult<crate::internal::identity_backup::IdentityBackupMaterial> {
+        use anp_identity::host::{RootExportPort, UserConfirmedRootExportRequest};
+        use anp_identity::KeySelector;
+
+        let (Some(store_id), Some(custody_identity_id)) = (
+            entry.anp_identity_store_id.as_deref(),
+            entry.anp_identity_id.as_deref(),
+        ) else {
+            return Err(crate::ImError::UnsupportedCapability {
+                capability: "identity_backup.custody_only".to_owned(),
             });
         };
-        let Some(roles) = store.load_file_compat_backup_roles(&dir_name, has_anp_binding)? else {
-            return Err(if has_anp_binding {
-                crate::ImError::UnsupportedCapability {
-                    capability: "identity_backup.custody_only".to_owned(),
+        let custodian = crate::internal::identity_custody::open_controller_manager(self.core)
+            .map_err(|_| crate::ImError::IdentityNotReady {
+                identity: identity_id.clone(),
+                missing: vec!["identity_custody_store".to_owned()],
+            })?;
+        let identity = custodian
+            .get(&anp_identity::IdentityRef {
+                store_id: store_id.to_owned(),
+                identity_id: custody_identity_id.to_owned(),
+                did: entry.summary.did.as_str().to_owned(),
+            })
+            .map_err(|error| crate::ImError::IdentityNotReady {
+                identity: identity_id.clone(),
+                missing: vec![match error {
+                    anp_identity::IdentityError::IdentityNotFound => "identity_custody_record",
+                    _ => "identity_custody_store",
                 }
-            } else {
-                crate::ImError::IdentityNotReady {
-                    identity: identity_id,
-                    missing: vec!["identity_private_key".to_owned()],
-                }
-            });
-        };
+                .to_owned()],
+            })?;
+        // The App has already completed its UserPresencePort gate before it
+        // calls this Core API; the ANP host still requires the confirmation
+        // marker explicitly.
+        let exported_root = identity
+            .export_root_for_legacy_envelope(UserConfirmedRootExportRequest {
+                key: KeySelector::Default,
+                user_presence_confirmed: true,
+            })
+            .map_err(|_| crate::ImError::UnsupportedCapability {
+                capability: "identity_backup.custody_only".to_owned(),
+            })?;
         Ok(crate::internal::identity_backup::IdentityBackupMaterial {
             identity_id,
             did: entry.summary.did.as_str().to_owned(),
             handle,
             full_handle,
             credential_name,
-            created_at,
-            custody: if has_anp_binding { "vnext" } else { "legacy" },
-            did_document: roles.did_document,
-            signing_private_pem: roles.signing_private_pem,
-            did_document_root_private_pem: roles.did_document_root_private_pem,
-            e2ee_signing_private_pem: roles.e2ee_signing_private_pem,
-            e2ee_agreement_private_pem: roles.e2ee_agreement_private_pem,
+            created_at: None,
+            custody: "anp_root",
+            did_document,
+            signing_private_pem: None,
+            did_document_root_private_pem: Some(
+                crate::internal::identity_backup::pem_encode_ed25519_pkcs8(
+                    exported_root.as_pkcs8_der(),
+                )?,
+            ),
+            e2ee_signing_private_pem: None,
+            e2ee_agreement_private_pem: None,
+        })
+    }
+
+    #[cfg(not(feature = "identity-native-anp"))]
+    fn anp_root_backup_material(
+        &self,
+        _entry: &RegistryEntry,
+        _identity_id: String,
+        _credential_name: String,
+        _handle: Option<String>,
+        _full_handle: Option<String>,
+        _did_document: Option<Value>,
+    ) -> crate::ImResult<crate::internal::identity_backup::IdentityBackupMaterial> {
+        Err(crate::ImError::UnsupportedCapability {
+            capability: "identity_backup.custody_only".to_owned(),
         })
     }
 
@@ -5526,6 +5624,91 @@ mod tests {
             runtime.key_provider.valid_auth_token().unwrap().as_deref(),
             Some("vault-anp-token")
         );
+    }
+
+    #[test]
+    fn anp_identity_backup_exports_only_the_root_control_key() {
+        use anp_identity::host::{RootExportPort, UserConfirmedRootExportRequest};
+        use anp_identity::KeySelector;
+        use base64::Engine as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        let vault_dir = root.path().join("vault");
+        std::fs::create_dir_all(paths.identities.identity_root_dir.join("alice-id")).unwrap();
+        let mut manager =
+            anp_identity::IdentityManager::initialize(anp_identity::IdentityManagerConfig {
+                state_root: paths.identities.identity_root_dir.join(".anp-identity"),
+                root_key: anp_identity::RootKeySource::Injected(
+                    anp_identity::InjectedStoreKey::new(
+                        "awiki-workspace-vault:workspace-a",
+                        [62_u8; 32],
+                    ),
+                ),
+            })
+            .unwrap();
+        let identity = manager.create(anp_identity_spec("backup")).unwrap();
+        let public = identity.public_identity().unwrap();
+        let reference = public.reference.clone();
+        let expected_root = identity
+            .export_root_for_legacy_envelope(UserConfirmedRootExportRequest {
+                key: KeySelector::Default,
+                user_presence_confirmed: true,
+            })
+            .unwrap();
+        let did_document = public.document.into_value();
+        crate::internal::identity_store::IdentityStore::new(&paths.identities)
+            .save_did_document("alice-id", &did_document)
+            .unwrap();
+        write_anp_identity_registry(
+            &paths.identities.registry_path,
+            &reference.did,
+            &reference.store_id,
+            &reference.identity_id,
+            None,
+        );
+        let core = crate::ImCore::new_with_options(
+            test_config(),
+            paths,
+            crate::ImCoreOpenOptions::default().with_identity_secret_vault(
+                crate::IdentitySecretStoragePolicy::VaultRequired,
+                crate::ImCoreSecretVaultOptions::new(
+                    DeviceVaultRootKey::from_bytes([62_u8; 32]),
+                    &vault_dir,
+                    "workspace-a",
+                    "device-a",
+                ),
+            ),
+        )
+        .unwrap();
+
+        let passphrase = "correct horse battery";
+        let package = core
+            .identities()
+            .export_identity_backup(crate::identity::IdentitySelector::Default, passphrase)
+            .unwrap();
+        let plaintext =
+            crate::internal::identity_backup::open_identity_backup(&package.bytes, passphrase)
+                .unwrap();
+        let payload: Value = serde_json::from_slice(&plaintext).unwrap();
+
+        assert_eq!(payload["identity"]["custody"], "anp_root");
+        assert_eq!(payload["identity"]["did"], reference.did);
+        assert_eq!(payload["identity"]["credential_name"], "alice");
+        assert!(payload["keys"].get("signing_private_pem").is_none());
+        assert!(payload["keys"].get("e2ee_signing_private_pem").is_none());
+        assert!(payload["keys"].get("e2ee_agreement_private_pem").is_none());
+        assert_eq!(payload["did_document"]["id"], reference.did);
+        let root_pem = payload["keys"]["did_document_root_private_pem"]
+            .as_str()
+            .unwrap();
+        let lines: Vec<&str> = root_pem.lines().collect();
+        assert_eq!(lines[0], "-----BEGIN PRIVATE KEY-----");
+        assert_eq!(lines[2], "-----END PRIVATE KEY-----");
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(lines[1])
+            .unwrap();
+        assert_eq!(der, expected_root.as_pkcs8_der());
     }
 
     #[tokio::test]

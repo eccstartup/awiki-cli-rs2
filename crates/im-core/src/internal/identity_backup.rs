@@ -33,10 +33,30 @@ pub(crate) struct IdentityBackupMaterial {
     pub(crate) created_at: Option<String>,
     pub(crate) custody: &'static str,
     pub(crate) did_document: Option<serde_json::Value>,
-    pub(crate) signing_private_pem: Zeroizing<String>,
+    pub(crate) signing_private_pem: Option<Zeroizing<String>>,
     pub(crate) did_document_root_private_pem: Option<Zeroizing<String>>,
     pub(crate) e2ee_signing_private_pem: Option<Zeroizing<String>>,
-    pub(crate) e2ee_agreement_private_pem: Zeroizing<String>,
+    pub(crate) e2ee_agreement_private_pem: Option<Zeroizing<String>>,
+}
+
+const ED25519_PKCS8_PREFIX: [u8; 16] = [
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+];
+
+/// Encodes a 32-byte Ed25519 seed already wrapped in PKCS#8 as the single-line
+/// PEM the identity store's root material parser accepts. Custody providers
+/// hand back opaque DER, so the shape is re-validated here instead of trusted.
+pub(crate) fn pem_encode_ed25519_pkcs8(der: &[u8]) -> crate::ImResult<Zeroizing<String>> {
+    if der.len() != 48 || der[..ED25519_PKCS8_PREFIX.len()] != ED25519_PKCS8_PREFIX {
+        return Err(crate::ImError::Internal {
+            message: "identity backup root key encoding is invalid".to_owned(),
+        });
+    }
+    use base64::Engine as _;
+    Ok(Zeroizing::new(format!(
+        "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
+        base64::engine::general_purpose::STANDARD.encode(der)
+    )))
 }
 
 #[derive(Serialize)]
@@ -66,12 +86,14 @@ struct BackupIdentity<'a> {
 
 #[derive(Serialize)]
 struct BackupKeys<'a> {
-    signing_private_pem: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signing_private_pem: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     did_document_root_private_pem: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     e2ee_signing_private_pem: Option<&'a str>,
-    e2ee_agreement_private_pem: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    e2ee_agreement_private_pem: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -128,6 +150,16 @@ pub(crate) fn seal_identity_backup(
     passphrase: &str,
     exported_at: String,
 ) -> crate::ImResult<Vec<u8>> {
+    if material.signing_private_pem.is_none()
+        && material.did_document_root_private_pem.is_none()
+        && material.e2ee_signing_private_pem.is_none()
+        && material.e2ee_agreement_private_pem.is_none()
+    {
+        return Err(crate::ImError::IdentityNotReady {
+            identity: material.identity_id.clone(),
+            missing: vec!["identity_private_key".to_owned()],
+        });
+    }
     let payload = BackupPayload {
         schema: BACKUP_PAYLOAD_SCHEMA,
         identity: BackupIdentity {
@@ -140,7 +172,10 @@ pub(crate) fn seal_identity_backup(
             custody: material.custody,
         },
         keys: BackupKeys {
-            signing_private_pem: &material.signing_private_pem,
+            signing_private_pem: material
+                .signing_private_pem
+                .as_deref()
+                .map(String::as_str),
             did_document_root_private_pem: material
                 .did_document_root_private_pem
                 .as_deref()
@@ -149,7 +184,10 @@ pub(crate) fn seal_identity_backup(
                 .e2ee_signing_private_pem
                 .as_deref()
                 .map(String::as_str),
-            e2ee_agreement_private_pem: &material.e2ee_agreement_private_pem,
+            e2ee_agreement_private_pem: material
+                .e2ee_agreement_private_pem
+                .as_deref()
+                .map(String::as_str),
         },
         did_document: material.did_document.as_ref(),
         excluded: EXCLUDED_MATERIAL,
@@ -376,18 +414,18 @@ mod tests {
             created_at: Some("2026-01-02T03:04:05Z".to_owned()),
             custody: "vnext",
             did_document: Some(serde_json::json!({"id": "did:wba:awiki.ai:alice"})),
-            signing_private_pem: Zeroizing::new(
+            signing_private_pem: Some(Zeroizing::new(
                 "-----BEGIN PRIVATE KEY-----\nsigning\n-----END PRIVATE KEY-----\n"
                     .to_owned(),
-            ),
+            )),
             did_document_root_private_pem: Some(Zeroizing::new(
                 "-----BEGIN PRIVATE KEY-----\nroot\n-----END PRIVATE KEY-----\n".to_owned(),
             )),
             e2ee_signing_private_pem: None,
-            e2ee_agreement_private_pem: Zeroizing::new(
+            e2ee_agreement_private_pem: Some(Zeroizing::new(
                 "-----BEGIN PRIVATE KEY-----\nagreement\n-----END PRIVATE KEY-----\n"
                     .to_owned(),
-            ),
+            )),
         }
     }
 
@@ -421,10 +459,16 @@ mod tests {
         assert_eq!(payload["schema"], BACKUP_PAYLOAD_SCHEMA);
         assert_eq!(payload["identity"]["did"], "did:wba:awiki.ai:alice");
         assert_eq!(payload["identity"]["local_identity_id"], "identity-1");
-        assert_eq!(payload["keys"]["signing_private_pem"], material().signing_private_pem.as_str());
         assert_eq!(
-            payload["keys"]["e2ee_agreement_private_pem"],
-            material().e2ee_agreement_private_pem.as_str()
+            payload["keys"]["signing_private_pem"].as_str(),
+            material().signing_private_pem.as_deref().map(String::as_str)
+        );
+        assert_eq!(
+            payload["keys"]["e2ee_agreement_private_pem"].as_str(),
+            material()
+                .e2ee_agreement_private_pem
+                .as_deref()
+                .map(String::as_str)
         );
         assert!(payload["keys"].get("e2ee_signing_private_pem").is_none());
         assert_eq!(payload["did_document"]["id"], "did:wba:awiki.ai:alice");
@@ -432,6 +476,78 @@ mod tests {
         assert!(excluded.iter().any(|value| value == "auth_jwt"));
         assert!(excluded.iter().any(|value| value == "daemon_subkey_private"));
         assert!(!payload.to_string().contains("jwt_token"));
+    }
+
+    #[test]
+    fn anp_root_only_material_keeps_the_root_key_and_omits_device_keys() {
+        let mut root_only = material();
+        root_only.custody = "anp_root";
+        root_only.signing_private_pem = None;
+        root_only.e2ee_signing_private_pem = None;
+        root_only.e2ee_agreement_private_pem = None;
+        root_only.did_document_root_private_pem =
+            Some(pem_encode_ed25519_pkcs8(&ed25519_pkcs8_der()).expect("pem"));
+        let expected_pem = root_only
+            .did_document_root_private_pem
+            .as_deref()
+            .map(String::as_str)
+            .expect("root pem")
+            .to_owned();
+
+        let container = seal_identity_backup(
+            &root_only,
+            "correct horse battery",
+            "2026-11-15T00:00:00Z".to_owned(),
+        )
+        .expect("seal");
+        let plaintext = open_identity_backup(&container, "correct horse battery").expect("open");
+        let payload: serde_json::Value =
+            serde_json::from_slice(plaintext.as_slice()).expect("json");
+        assert_eq!(payload["identity"]["custody"], "anp_root");
+        assert_eq!(
+            payload["keys"]["did_document_root_private_pem"],
+            expected_pem.as_str()
+        );
+        assert!(payload["keys"].get("signing_private_pem").is_none());
+        assert!(payload["keys"].get("e2ee_signing_private_pem").is_none());
+        assert!(payload["keys"].get("e2ee_agreement_private_pem").is_none());
+    }
+
+    #[test]
+    fn material_without_any_key_fails_closed() {
+        let mut empty = material();
+        empty.signing_private_pem = None;
+        empty.did_document_root_private_pem = None;
+        empty.e2ee_signing_private_pem = None;
+        empty.e2ee_agreement_private_pem = None;
+        assert!(matches!(
+            seal_identity_backup(
+                &empty,
+                "correct horse battery",
+                "2026-11-15T00:00:00Z".to_owned()
+            ),
+            Err(crate::ImError::IdentityNotReady { .. })
+        ));
+    }
+
+    #[test]
+    fn pem_encoding_accepts_only_ed25519_pkcs8() {
+        let pem = pem_encode_ed25519_pkcs8(&ed25519_pkcs8_der()).expect("pem");
+        let lines = pem.split('\n').collect::<Vec<_>>();
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], "-----BEGIN PRIVATE KEY-----");
+        assert_eq!(lines[1].len(), 64);
+        assert_eq!(lines[2], "-----END PRIVATE KEY-----");
+        assert_eq!(lines[3], "");
+
+        assert!(pem_encode_ed25519_pkcs8(&[0_u8; 48]).is_err());
+        assert!(pem_encode_ed25519_pkcs8(&ed25519_pkcs8_der()[..47]).is_err());
+    }
+
+    fn ed25519_pkcs8_der() -> Vec<u8> {
+        let mut der = ED25519_PKCS8_PREFIX.to_vec();
+        der.extend_from_slice(&[7_u8; 32]);
+        der
     }
 
     #[test]
