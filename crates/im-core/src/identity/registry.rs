@@ -1097,6 +1097,18 @@ impl<'a> IdentityRegistry<'a> {
         {
             return Ok(super::LegacyUpgradeStatus::Completed);
         }
+        if index
+            .credentials
+            .get(alias)
+            .is_some_and(crate::internal::identity_legacy_upgrade_runtime::is_root_only_entry)
+        {
+            return Ok(super::LegacyUpgradeStatus::RetryRequired {
+                identity_id: identity.id.as_str().to_owned(),
+                code:
+                    crate::internal::identity_legacy_upgrade_runtime::ROOT_ONLY_REQUIRES_DEVICE_JOIN
+                        .to_owned(),
+            });
+        }
         let pending =
             crate::internal::identity_legacy_upgrade_pending::PendingLegacyUpgradeStore::from_core(
                 self.core,
@@ -6059,7 +6071,8 @@ mod tests {
         let passphrase = "correct horse battery";
         let (_source, package, source_did) = exported_anp_root_backup(passphrase);
         let target_root = tempfile::tempdir().unwrap();
-        let target = crate::ImCore::new(test_config(), test_paths(target_root.path())).unwrap();
+        let target_paths = test_paths(target_root.path());
+        let target = crate::ImCore::new(test_config(), target_paths.clone()).unwrap();
 
         let inspection = target
             .identities()
@@ -6118,6 +6131,39 @@ mod tests {
         );
         assert_eq!(runtime.key_provider.valid_auth_token().unwrap(), None);
 
+        let root_only_status = crate::identity::LegacyUpgradeStatus::RetryRequired {
+            identity_id: "alice-id".to_owned(),
+            code: "root_only_requires_device_join".to_owned(),
+        };
+        assert_eq!(
+            target
+                .identities()
+                .legacy_upgrade_status(crate::identity::IdentitySelector::Default)
+                .unwrap(),
+            root_only_status
+        );
+        assert_eq!(
+            target
+                .identities()
+                .upgrade_legacy_identity_async(crate::identity::IdentitySelector::Default)
+                .await
+                .unwrap(),
+            root_only_status
+        );
+        let index = crate::internal::identity_store::IdentityStore::new(&target_paths.identities)
+            .load_index()
+            .unwrap();
+        let entry = index.credentials.get("alice").unwrap();
+        assert!(entry.device_state.is_none());
+        assert!(entry.vault_migration.is_none());
+        assert_eq!(
+            target
+                .identities()
+                .legacy_upgrade_status(crate::identity::IdentitySelector::Default)
+                .unwrap(),
+            root_only_status
+        );
+
         let repeated = target
             .identities()
             .import_identity_backup(&package.bytes, passphrase, true)
@@ -6127,6 +6173,95 @@ mod tests {
         assert_eq!(repeated.identity_id, imported.identity_id);
         assert_eq!(repeated.did, imported.did);
         assert_eq!(target.identities().list().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn root_only_identity_backup_delete_supersedes_an_earlier_device_retirement() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        use sha2::{Digest as _, Sha256};
+
+        let passphrase = "correct horse battery";
+        let (_source, package, source_did) = exported_anp_root_backup(passphrase);
+        let target_root = tempfile::tempdir().unwrap();
+        let target_paths = test_paths(target_root.path());
+        let target = crate::ImCore::new(test_config(), target_paths.clone()).unwrap();
+        target
+            .identities()
+            .import_identity_backup(&package.bytes, passphrase, true)
+            .await
+            .unwrap();
+        let store = crate::internal::identity_store::IdentityStore::new(&target_paths.identities);
+        let (local_alias, identity_id, identity_dir_name) = {
+            let index = store.load_index().unwrap();
+            let (alias, entry) = index.credentials.iter().next().unwrap();
+            assert!(entry.device_state.is_none());
+            assert_eq!(entry.did, source_did);
+            (
+                alias.clone(),
+                entry.unique_id.clone(),
+                entry.dir_name.clone(),
+            )
+        };
+
+        // An earlier device-bound lifetime of the same identity left a
+        // completed retirement marker. Importing the root-only backup reuses
+        // the same identity id, DID, alias and directory, so deletion must
+        // supersede that marker instead of failing with permission_denied.
+        let retirements = target_paths
+            .identities
+            .identity_root_dir
+            .join(".identity-retirements");
+        std::fs::create_dir_all(&retirements).unwrap();
+        std::fs::write(
+            retirements.join(format!(
+                "{}.json",
+                URL_SAFE_NO_PAD.encode(Sha256::digest(identity_id.as_bytes()))
+            )),
+            serde_json::to_vec(&json!({
+                "schema_version": 1,
+                "identity_id": identity_id,
+                "did": source_did,
+                "local_alias": local_alias,
+                "identity_dir_name": identity_dir_name,
+                "protocol_device_id": "dev-previous-lifetime",
+                "phase": "completed"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let deleted = target
+            .identities()
+            .delete_local_identity(crate::identity::IdentitySelector::Default)
+            .unwrap();
+        assert_eq!(deleted.deleted.did.as_str(), source_did);
+        assert!(target.identities().list().unwrap().is_empty());
+        let manager = crate::internal::identity_custody::open_controller_manager(&target).unwrap();
+        assert!(manager.list().unwrap().is_empty());
+        drop(manager);
+        drop(target);
+
+        // The next open must recover the completed deletion instead of failing
+        // the retirement guard.
+        let reopened = crate::ImCore::new(test_config(), target_paths.clone()).unwrap();
+        assert!(reopened.identities().list().unwrap().is_empty());
+        drop(reopened);
+
+        // Re-import and delete again: the completed root-only marker now
+        // matches the registry exactly, so the second deletion must start a new
+        // journal instead of replaying the stale completed marker.
+        let target = crate::ImCore::new(test_config(), target_paths.clone()).unwrap();
+        let reimported = target
+            .identities()
+            .import_identity_backup(&package.bytes, passphrase, true)
+            .await
+            .unwrap();
+        assert!(!reimported.already_present);
+        target
+            .identities()
+            .delete_local_identity(crate::identity::IdentitySelector::Default)
+            .unwrap();
+        assert!(target.identities().list().unwrap().is_empty());
     }
 
     #[tokio::test]

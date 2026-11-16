@@ -4,6 +4,19 @@ use std::sync::Arc;
 
 use crate::internal::transport::AsyncAuthenticatedRpcTransport;
 
+/// Stable status code for an ANP-custody identity installed from an identity
+/// backup: it owns the DID root capability but has no protocol device binding,
+/// so no legacy upgrade (and no login) can apply until a real device Join
+/// authorizes this machine.
+pub(crate) const ROOT_ONLY_REQUIRES_DEVICE_JOIN: &str = "root_only_requires_device_join";
+
+pub(crate) fn is_root_only_entry(entry: &crate::internal::identity_store::IndexEntry) -> bool {
+    entry.identity_custody_backend.as_deref() == Some("anp_identity")
+        && entry.anp_identity_store_id.is_some()
+        && entry.anp_identity_id.is_some()
+        && entry.device_state.is_none()
+}
+
 pub(crate) async fn upgrade(
     core: &crate::core::ImCore,
     selector: crate::identity::IdentitySelector,
@@ -43,6 +56,14 @@ async fn upgrade_inner(
         .credentials
         .get(&alias)
         .ok_or(crate::ImError::PermissionDenied)?;
+    if is_root_only_entry(entry) {
+        // A root-only imported identity has no local device keys at all; the
+        // legacy migration would only fail on missing credential files.
+        return Ok(crate::identity::LegacyUpgradeStatus::RetryRequired {
+            identity_id: entry.unique_id.clone(),
+            code: ROOT_ONLY_REQUIRES_DEVICE_JOIN.to_owned(),
+        });
+    }
     if entry.device_state.as_ref().is_some_and(|state| {
         state.mode == crate::internal::identity_device_state::IdentityDeviceMode::VNext
     }) {

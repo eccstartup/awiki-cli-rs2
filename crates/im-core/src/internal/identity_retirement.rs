@@ -91,19 +91,30 @@ pub(crate) fn ensure_prepared(
                     detail: error.to_string(),
                 })?;
             validate_record(core, &existing)?;
-            if existing.identity_id != record.identity_id
-                || existing.did != record.did
-                || existing.local_alias != record.local_alias
-                || existing.identity_dir_name != record.identity_dir_name
-                || existing.next_default_alias != record.next_default_alias
-                || existing.protocol_device_id != record.protocol_device_id
+            if existing.identity_id == record.identity_id
+                && existing.did == record.did
+                && existing.local_alias == record.local_alias
+                && existing.identity_dir_name == record.identity_dir_name
+                && existing.next_default_alias == record.next_default_alias
+                && existing.protocol_device_id == record.protocol_device_id
             {
-                if completed_retirement_can_advance_to_current_device(core, &existing, &record)? {
+                // Re-registration reuses the same identity id and directory, so a
+                // completed marker that still matches the local registry belongs
+                // to an earlier, already retired lifetime. Deleting the current
+                // lifetime must start a new journal: replaying the stale completed
+                // record would skip the tombstone and leave the live credential
+                // installed.
+                if existing.phase == IdentityRetirementPhase::Completed
+                    && identity_is_registered(core, &existing)?
+                {
                     return write_record(&path, &record);
                 }
-                return Err(crate::ImError::PermissionDenied);
+                return Ok(());
             }
-            Ok(())
+            if completed_retirement_can_advance_to_current_identity(core, &existing, &record)? {
+                return write_record(&path, &record);
+            }
+            Err(crate::ImError::PermissionDenied)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => write_record(&path, &record),
         Err(error) => Err(crate::ImError::from(error)),
@@ -111,13 +122,16 @@ pub(crate) fn ensure_prepared(
 }
 
 /// Allows the per-identity retirement journal to advance after the same
-/// identity successfully joined again with a different device key.
+/// identity was installed again in a later lifetime.
 ///
 /// An incomplete record remains immutable. A completed record may be replaced
 /// only when the local identity registry proves that the exact same identity
-/// and DID are currently active under the replacement device. This keeps
-/// crash recovery fail-closed while permitting repeated revoke/rejoin cycles.
-fn completed_retirement_can_advance_to_current_device(
+/// and DID are currently active with the replacement credentials: either an
+/// authorized device or a root-only identity installed from an identity
+/// backup, which owns no device record at all. This keeps crash recovery
+/// fail-closed while permitting repeated revoke/rejoin and import/delete
+/// cycles.
+fn completed_retirement_can_advance_to_current_identity(
     core: &crate::core::ImCore,
     existing: &IdentityRetirementRecord,
     replacement: &IdentityRetirementRecord,
@@ -128,13 +142,9 @@ fn completed_retirement_can_advance_to_current_device(
         || existing.did != replacement.did
         || existing.local_alias != replacement.local_alias
         || existing.identity_dir_name != replacement.identity_dir_name
-        || existing.protocol_device_id == replacement.protocol_device_id
     {
         return Ok(false);
     }
-    let Some(replacement_device_id) = replacement.protocol_device_id.as_deref() else {
-        return Ok(false);
-    };
     let store =
         crate::internal::identity_store::IdentityStore::new(&core.inner().sdk_paths().identities);
     let index = store.load_index()?;
@@ -151,16 +161,29 @@ fn completed_retirement_can_advance_to_current_device(
     if matches.next().is_some() {
         return Ok(false);
     }
-    let Some(authorization) = entry
-        .device_state
-        .as_ref()
-        .and_then(|state| state.authorization.as_ref())
-    else {
-        return Ok(false);
-    };
-    Ok(authorization.status
-        == crate::internal::identity_device_state::DeviceAuthorizationStatus::Active
-        && authorization.protocol_device_id.as_str() == replacement_device_id)
+    match replacement.protocol_device_id.as_deref() {
+        Some(replacement_device_id) => {
+            if existing.protocol_device_id.as_deref() == Some(replacement_device_id) {
+                return Ok(false);
+            }
+            let Some(authorization) = entry
+                .device_state
+                .as_ref()
+                .and_then(|state| state.authorization.as_ref())
+            else {
+                return Ok(false);
+            };
+            Ok(authorization.status
+                == crate::internal::identity_device_state::DeviceAuthorizationStatus::Active
+                && authorization.protocol_device_id.as_str() == replacement_device_id)
+        }
+        // A root-only import owns no local device record, so it can only
+        // supersede the completed marker of an earlier device-bound lifetime.
+        // The registry must still prove this exact identity as a single
+        // root-only credential; any other shape stays fail-closed.
+        None => Ok(existing.protocol_device_id.is_some()
+            && crate::internal::identity_legacy_upgrade_runtime::is_root_only_entry(entry)),
+    }
 }
 
 pub(crate) fn is_completed(
@@ -389,9 +412,6 @@ fn cleanup_retired_anp_identity(
     core: &crate::core::ImCore,
     record: &IdentityRetirementRecord,
 ) -> crate::ImResult<()> {
-    let Some(protocol_device_id) = record.protocol_device_id.as_deref() else {
-        return Ok(());
-    };
     let mut manager = crate::internal::identity_custody::open_controller_manager(core)?;
     let mut matches = manager
         .list()
@@ -408,24 +428,30 @@ fn cleanup_retired_anp_identity(
     let Some(descriptor) = matches.pop() else {
         return Ok(());
     };
-    let identity = manager
-        .get(&descriptor.reference)
-        .map_err(crate::internal::identity_custody::map_facade_error)?;
-    let public = identity
-        .public_identity()
-        .map_err(crate::internal::identity_custody::map_facade_error)?;
-    let manifest = anp::authentication::validate_device_manifest(public.document.as_value())
-        .map_err(|_| crate::ImError::PermissionDenied)?
-        .ok_or(crate::ImError::PermissionDenied)?;
-    if manifest
-        .devices
-        .iter()
-        .filter(|device| device.device_id == protocol_device_id)
-        .count()
-        != 1
-    {
-        return Err(crate::ImError::PermissionDenied);
+    if let Some(protocol_device_id) = record.protocol_device_id.as_deref() {
+        let identity = manager
+            .get(&descriptor.reference)
+            .map_err(crate::internal::identity_custody::map_facade_error)?;
+        let public = identity
+            .public_identity()
+            .map_err(crate::internal::identity_custody::map_facade_error)?;
+        let manifest = anp::authentication::validate_device_manifest(public.document.as_value())
+            .map_err(|_| crate::ImError::PermissionDenied)?
+            .ok_or(crate::ImError::PermissionDenied)?;
+        if manifest
+            .devices
+            .iter()
+            .filter(|device| device.device_id == protocol_device_id)
+            .count()
+            != 1
+        {
+            return Err(crate::ImError::PermissionDenied);
+        }
     }
+    // A root-only identity was installed without a local device record, but it
+    // still owns the DID root material on this machine. The caller has already
+    // established that no current credential references this identity, and the
+    // exact DID match above is the only binding the retired record can prove.
     manager
         .delete(
             &descriptor.reference,
