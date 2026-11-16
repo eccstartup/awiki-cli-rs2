@@ -653,6 +653,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DartDeviceJoinSide dco_decode_dart_device_join_side(dynamic raw);
 
   @protected
+  DartDeviceRebindResult dco_decode_dart_device_rebind_result(dynamic raw);
+
+  @protected
   DartDeviceRegistryAuthorizedDeviceSummary
   dco_decode_dart_device_registry_authorized_device_summary(dynamic raw);
 
@@ -2206,6 +2209,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartDeviceJoinSide sse_decode_dart_device_join_side(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DartDeviceRebindResult sse_decode_dart_device_rebind_result(
     SseDeserializer deserializer,
   );
 
@@ -4092,6 +4100,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_dart_device_join_side(
     DartDeviceJoinSide self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_dart_device_rebind_result(
+    DartDeviceRebindResult self,
     SseSerializer serializer,
   );
 

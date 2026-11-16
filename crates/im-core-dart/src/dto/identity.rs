@@ -387,6 +387,15 @@ pub struct DartDeviceRevokeResult {
     pub status: DartDeviceRevokeStatus,
 }
 
+/// Safe host projection of a root-signed device rebind. Operation state,
+/// proofs, DID Documents and bearer credentials remain inside Core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DartDeviceRebindResult {
+    pub did: String,
+    pub device_id: String,
+    pub already_bound: bool,
+}
+
 /// Opaque, short-lived authorization returned by root-transfer preparation.
 ///
 /// Its debug projection must never reveal the handle.

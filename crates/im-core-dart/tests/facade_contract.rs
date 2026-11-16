@@ -1261,6 +1261,7 @@ fn vault_open_options_map_to_im_core_without_debug_secret_leak() {
             device_id: "device-a".to_string(),
         }),
         multi_device_device_revoke_enabled: true,
+        multi_device_device_rebind_enabled: true,
         multi_device_direct_e2ee_enabled: true,
         multi_device_group_e2ee_enabled: true,
         multi_device_handle_recovery_enabled: true,
@@ -1273,6 +1274,7 @@ fn vault_open_options_map_to_im_core_without_debug_secret_leak() {
         im_core::IdentitySecretStoragePolicy::VaultRequired
     ));
     assert!(mapped.multi_device_device_revoke_enabled);
+    assert!(mapped.multi_device_device_rebind_enabled);
     assert!(mapped.multi_device_direct_e2ee_enabled);
     assert!(mapped.multi_device_group_e2ee_enabled);
     assert!(mapped.multi_device_handle_recovery_enabled);
@@ -1303,6 +1305,7 @@ fn vault_root_key_mapping_rejects_wrong_length_without_echoing_secret() {
             device_id: "device-a".to_string(),
         }),
         multi_device_device_revoke_enabled: false,
+        multi_device_device_rebind_enabled: false,
         multi_device_direct_e2ee_enabled: false,
         multi_device_group_e2ee_enabled: false,
         multi_device_handle_recovery_enabled: false,
@@ -1314,6 +1317,31 @@ fn vault_root_key_mapping_rejects_wrong_length_without_echoing_secret() {
     assert_eq!(error.field.as_deref(), Some("root_key"));
     assert!(error.message.contains("32 bytes"));
     assert!(!error.message.contains("short-secret"));
+}
+
+#[test]
+fn device_rebind_result_maps_only_safe_product_state() {
+    let result = im_core::identity::DeviceRebindResult {
+        did: im_core::ids::Did::parse("did:wba:example.test:alice").expect("did"),
+        device_id: im_core::ids::ProtocolDeviceId::parse("device-member").expect("device id"),
+        already_bound: true,
+    };
+
+    let dart: awiki_im_core::dto::identity::DartDeviceRebindResult = result.into();
+    assert_eq!(dart.did, "did:wba:example.test:alice");
+    assert_eq!(dart.device_id, "device-member");
+    assert!(dart.already_bound);
+    let debug = format!("{dart:?}");
+    for forbidden in [
+        "operation_id",
+        "document_hash",
+        "registry_version",
+        "root_proof",
+        "access_token",
+        "refresh_token",
+    ] {
+        assert!(!debug.contains(forbidden));
+    }
 }
 
 #[test]

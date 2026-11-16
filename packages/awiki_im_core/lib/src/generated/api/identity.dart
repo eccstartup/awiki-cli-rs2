@@ -209,6 +209,19 @@ Future<DartDeviceRevokeResult> revokeDevice({
   userPresenceConfirmed: userPresenceConfirmed,
 );
 
+/// Binds this device to an imported root-only identity by root-signing a
+/// replacement DID Document for the same DID. Repeating the call resumes the
+/// exact persisted operation.
+Future<DartDeviceRebindResult> rebindDevice({
+  required ArcDartImCore core,
+  required DartIdentitySelector selector,
+  required bool userPresenceConfirmed,
+}) => RustLib.instance.api.crateApiIdentityRebindDevice(
+  core: core,
+  selector: selector,
+  userPresenceConfirmed: userPresenceConfirmed,
+);
+
 Future<DartRootKeyTransferPreparation> prepareRootKeyTransfer({
   required ArcDartImClient client,
   required String recipientDeviceId,

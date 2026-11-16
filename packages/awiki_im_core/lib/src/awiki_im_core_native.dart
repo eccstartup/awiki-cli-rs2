@@ -629,6 +629,23 @@ class AwikiImCore {
     return result._toModel();
   }
 
+  /// Binds this device to an imported root-only identity. The DID and root
+  /// key stay unchanged; repeating the call resumes the same operation.
+  Future<DeviceRebindResult> rebindDevice({
+    required IdentitySelector selector,
+    required bool userPresenceConfirmed,
+  }) async {
+    _ensureNotDisposed();
+    final result = await _mapNativeErrors(
+      () => gen_identity_api.rebindDevice(
+        core: _inner,
+        selector: selector._toGen(),
+        userPresenceConfirmed: userPresenceConfirmed,
+      ),
+    );
+    return result._toModel();
+  }
+
   Future<List<DeviceJoinSessionSummary>> localDeviceJoinSessions() async {
     _ensureNotDisposed();
     final sessions = await _mapNativeErrors(
@@ -2825,6 +2842,7 @@ extension on AwikiImCoreOpenOptions {
     identitySecretStoragePolicy: identitySecretStoragePolicy._toGen(),
     identitySecretVault: identitySecretVault?._toGen(),
     multiDeviceDeviceRevokeEnabled: multiDeviceDeviceRevokeEnabled,
+    multiDeviceDeviceRebindEnabled: multiDeviceDeviceRebindEnabled,
     multiDeviceDirectE2EeEnabled: multiDeviceDirectE2eeEnabled,
     multiDeviceGroupE2EeEnabled: multiDeviceGroupE2eeEnabled,
     multiDeviceHandleRecoveryEnabled: multiDeviceHandleRecoveryEnabled,
@@ -4980,6 +4998,14 @@ extension on gen_identity.DartRootKeyTransferSendResult {
     recipientDeviceId: recipientDeviceId,
     messageId: messageId,
     acceptedAt: acceptedAt,
+  );
+}
+
+extension on gen_identity.DartDeviceRebindResult {
+  DeviceRebindResult _toModel() => DeviceRebindResult(
+    did: did,
+    deviceId: deviceId,
+    alreadyBound: alreadyBound,
   );
 }
 

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-const VNEXT_DEVICE_PROFILES: &[&str] = &[
+pub(crate) const VNEXT_DEVICE_PROFILES: &[&str] = &[
     anp::authentication::PROFILE_CORE_BINDING_V1,
     anp::authentication::PROFILE_IDENTITY_DISCOVERY_V1,
     anp::authentication::PROFILE_DIRECT_BASE_V1,
@@ -536,7 +536,10 @@ pub(crate) fn rebuild_legacy_upgrade_target(
     Ok(())
 }
 
-fn unique_verification_method<'a>(document: &'a Value, key_id: &str) -> crate::ImResult<&'a Value> {
+pub(crate) fn unique_verification_method<'a>(
+    document: &'a Value,
+    key_id: &str,
+) -> crate::ImResult<&'a Value> {
     let methods = document
         .get("verificationMethod")
         .and_then(Value::as_array)
@@ -551,7 +554,7 @@ fn unique_verification_method<'a>(document: &'a Value, key_id: &str) -> crate::I
     Ok(method)
 }
 
-fn legacy_base_document(document: &Value) -> crate::ImResult<Value> {
+pub(crate) fn legacy_base_document(document: &Value) -> crate::ImResult<Value> {
     let mut base = document
         .as_object()
         .cloned()
@@ -562,7 +565,7 @@ fn legacy_base_document(document: &Value) -> crate::ImResult<Value> {
     Ok(Value::Object(base))
 }
 
-fn validated_legacy_daemon_method<'a>(
+pub(crate) fn validated_legacy_daemon_method<'a>(
     document: &'a Value,
     did: &crate::ids::Did,
 ) -> crate::ImResult<Option<&'a Value>> {
@@ -631,7 +634,7 @@ fn relationship_count(document: &Value, field: &str, key_id: &str) -> usize {
         .unwrap_or_default()
 }
 
-fn append_daemon_method(
+pub(crate) fn append_daemon_method(
     document: &mut Value,
     did: &crate::ids::Did,
     method: &Value,

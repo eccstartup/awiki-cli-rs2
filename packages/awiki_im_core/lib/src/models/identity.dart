@@ -1008,6 +1008,20 @@ class RootKeyTransferException implements Exception {
 
 enum DeviceRevokeStatus { revoked }
 
+/// Secret-free result of root-signing a replacement DID Document for the
+/// imported identity and binding this device to it.
+class DeviceRebindResult {
+  const DeviceRebindResult({
+    required this.did,
+    required this.deviceId,
+    required this.alreadyBound,
+  });
+
+  final String did;
+  final String deviceId;
+  final bool alreadyBound;
+}
+
 /// Secret-free result of permanently revoking one AWiki device.
 class DeviceRevokeResult {
   const DeviceRevokeResult({

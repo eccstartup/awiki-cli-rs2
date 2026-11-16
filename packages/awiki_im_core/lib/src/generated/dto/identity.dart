@@ -544,6 +544,32 @@ class DartDeviceJoinSessionSummary {
 
 enum DartDeviceJoinSide { newDevice, admin }
 
+/// Safe host projection of a root-signed device rebind. Operation state,
+/// proofs, DID Documents and bearer credentials remain inside Core.
+class DartDeviceRebindResult {
+  final String did;
+  final String deviceId;
+  final bool alreadyBound;
+
+  const DartDeviceRebindResult({
+    required this.did,
+    required this.deviceId,
+    required this.alreadyBound,
+  });
+
+  @override
+  int get hashCode => did.hashCode ^ deviceId.hashCode ^ alreadyBound.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartDeviceRebindResult &&
+          runtimeType == other.runtimeType &&
+          did == other.did &&
+          deviceId == other.deviceId &&
+          alreadyBound == other.alreadyBound;
+}
+
 class DartDeviceRegistryAuthorizedDeviceSummary {
   final String protocolDeviceId;
   final String signingKeyId;

@@ -10,7 +10,7 @@ use crate::dto::{
         DartDaemonSubkeyPublicProposal, DartDeleteLocalIdentityResult,
         DartDeviceCapabilityUpgradeStatus, DartDeviceJoinApprovalPrompt, DartDeviceJoinProgress,
         DartDeviceJoinRegistrySnapshot, DartDeviceJoinRejectReason, DartDeviceJoinRequestNotice,
-        DartDeviceJoinSessionSummary, DartDeviceRevokeResult,
+        DartDeviceJoinSessionSummary, DartDeviceRebindResult, DartDeviceRevokeResult,
         DartHandleRecoveryAccountEpochReceipt, DartHandleRecoveryContext,
         DartHandleRecoveryOperationSummary, DartHandleRecoveryOtpResult,
         DartHandleRecoveryProgress, DartHandleRegistrationResult, DartIdentityBackupInspection,
@@ -326,6 +326,26 @@ pub async fn revoke_device(
             identity: selector.try_into()?,
             target_device_id: im_core::ids::ProtocolDeviceId::parse(target_device_id)
                 .map_err(DartImError::from)?,
+            user_presence_confirmed,
+        })
+        .await
+        .map(Into::into)
+        .map_err(DartImError::from)
+}
+
+/// Binds this device to an imported root-only identity by root-signing a
+/// replacement DID Document for the same DID. Repeating the call resumes the
+/// exact persisted operation.
+pub async fn rebind_device(
+    core: &Arc<crate::api::core::DartImCore>,
+    selector: DartIdentitySelector,
+    user_presence_confirmed: bool,
+) -> Result<DartDeviceRebindResult, DartImError> {
+    let inner = core.clone_inner()?;
+    inner
+        .device_rebind()
+        .rebind(im_core::identity::DeviceRebindRequest {
+            identity: selector.try_into()?,
             user_presence_confirmed,
         })
         .await

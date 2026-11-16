@@ -39,6 +39,10 @@ pub enum SecretKind {
     /// Encrypted exact-retry intent for one permanent device revocation.
     /// This is AWiki-local state and never appears in ANP or DID Documents.
     IdentityDeviceRevokePending,
+    /// Encrypted exact-retry intent for root-authorized device rebind. It holds
+    /// the exported root PKCS#8 and the freshly generated device keys until the
+    /// replacement manifest is committed and installed locally.
+    IdentityDeviceRebindPending,
     /// Local exact-retry journal for ordinary service updates.
     IdentityServicesUpdatePending,
     IdentityDaemonPrivate,
@@ -74,6 +78,7 @@ impl SecretKind {
             Self::IdentityRootImportPending => "identity.root_import.pending",
             Self::IdentityAuthCommitPending => "identity.auth_commit.pending",
             Self::IdentityDeviceRevokePending => "identity.device.revoke.pending",
+            Self::IdentityDeviceRebindPending => "identity.device.rebind.pending",
             Self::IdentityServicesUpdatePending => "identity.services.update.pending",
             Self::IdentityDaemonPrivate => "identity.daemon.private",
             Self::AuthJwt => "auth.jwt",

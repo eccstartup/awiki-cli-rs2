@@ -116,6 +116,7 @@ class DartImCoreOpenOptions {
   final DartIdentitySecretStoragePolicy identitySecretStoragePolicy;
   final DartImCoreSecretVaultOptions? identitySecretVault;
   final bool multiDeviceDeviceRevokeEnabled;
+  final bool multiDeviceDeviceRebindEnabled;
   final bool multiDeviceDirectE2EeEnabled;
   final bool multiDeviceGroupE2EeEnabled;
   final bool multiDeviceHandleRecoveryEnabled;
@@ -125,6 +126,7 @@ class DartImCoreOpenOptions {
     required this.identitySecretStoragePolicy,
     this.identitySecretVault,
     required this.multiDeviceDeviceRevokeEnabled,
+    required this.multiDeviceDeviceRebindEnabled,
     required this.multiDeviceDirectE2EeEnabled,
     required this.multiDeviceGroupE2EeEnabled,
     required this.multiDeviceHandleRecoveryEnabled,
@@ -136,6 +138,7 @@ class DartImCoreOpenOptions {
       identitySecretStoragePolicy.hashCode ^
       identitySecretVault.hashCode ^
       multiDeviceDeviceRevokeEnabled.hashCode ^
+      multiDeviceDeviceRebindEnabled.hashCode ^
       multiDeviceDirectE2EeEnabled.hashCode ^
       multiDeviceGroupE2EeEnabled.hashCode ^
       multiDeviceHandleRecoveryEnabled.hashCode ^
@@ -150,6 +153,8 @@ class DartImCoreOpenOptions {
           identitySecretVault == other.identitySecretVault &&
           multiDeviceDeviceRevokeEnabled ==
               other.multiDeviceDeviceRevokeEnabled &&
+          multiDeviceDeviceRebindEnabled ==
+              other.multiDeviceDeviceRebindEnabled &&
           multiDeviceDirectE2EeEnabled == other.multiDeviceDirectE2EeEnabled &&
           multiDeviceGroupE2EeEnabled == other.multiDeviceGroupE2EeEnabled &&
           multiDeviceHandleRecoveryEnabled ==

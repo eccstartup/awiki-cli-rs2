@@ -1495,6 +1495,46 @@ impl<'a> CorePlainTransport<'a> {
             .await
     }
 
+    /// Sends one JSON-RPC call authenticated by the DID Document's root key.
+    ///
+    /// `signer_document` must be the document the server currently stores,
+    /// because the server rebuilds the absolute request URL from its own
+    /// public base and verifies the HTTP signature against that document.
+    /// Both the root `kid` and its public key therefore come from the live
+    /// document, never from this process's assumptions.
+    pub(crate) async fn root_signed_rpc_async(
+        &self,
+        endpoint: &'static str,
+        method: &'static str,
+        params: Value,
+        signer_document: &Value,
+        root_key_id: &str,
+        root_key: &anp::PrivateKeyMaterial,
+    ) -> crate::ImResult<Value> {
+        let body = serde_json::to_vec(&crate::internal::json_rpc::build_payload(method, params))
+            .map_err(|error| crate::ImError::Serialization {
+                detail: error.to_string(),
+            })?;
+        let url = self.rpc_url(endpoint);
+        let mut headers = self.unsigned_headers(endpoint, Some(method));
+        let signature_headers = anp::authentication::generate_http_signature_headers_with_kid(
+            signer_document,
+            &url,
+            "POST",
+            root_key,
+            None,
+            Some(&body),
+            root_key_id,
+            anp::authentication::HttpSignatureOptions::default(),
+        )
+        .map_err(|_| crate::ImError::PermissionDenied)?;
+        headers.extend(signature_headers);
+        let response = self
+            .execute_unsigned_json_request_async("POST", &url, body, headers)
+            .await?;
+        decode_rpc_http_response(response.status_code, &response.body)
+    }
+
     fn unsigned_headers(
         &self,
         endpoint: &str,

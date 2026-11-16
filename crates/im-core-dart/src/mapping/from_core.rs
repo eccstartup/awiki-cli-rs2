@@ -24,7 +24,8 @@ use crate::dto::{
         DartDeviceJoinPhase, DartDeviceJoinProgress, DartDeviceJoinRegistrySnapshot,
         DartDeviceJoinRemoteState, DartDeviceJoinRequestNotice, DartDeviceJoinRole,
         DartDeviceJoinSessionSummary, DartDeviceJoinSide,
-        DartDeviceRegistryAuthorizedDeviceSummary, DartDeviceRevokeResult, DartDeviceRevokeStatus,
+        DartDeviceRebindResult, DartDeviceRegistryAuthorizedDeviceSummary,
+        DartDeviceRevokeResult, DartDeviceRevokeStatus,
         DartHandleRecoveryAccountEpochReceipt, DartHandleRecoveryAction, DartHandleRecoveryContext,
         DartHandleRecoveryErrorCode, DartHandleRecoveryImpact, DartHandleRecoveryKeyState,
         DartHandleRecoveryOperationLifecycle, DartHandleRecoveryOperationSummary,
@@ -332,6 +333,16 @@ impl From<im_core::identity::HandleRecoveryAccountEpochReceipt>
             state_root_fingerprint: value.state_root_fingerprint,
             applied_at: value.applied_at,
             metadata_json: value.metadata_json,
+        }
+    }
+}
+
+impl From<im_core::identity::DeviceRebindResult> for DartDeviceRebindResult {
+    fn from(value: im_core::identity::DeviceRebindResult) -> Self {
+        Self {
+            did: value.did.as_str().to_owned(),
+            device_id: value.device_id.as_str().to_owned(),
+            already_bound: value.already_bound,
         }
     }
 }
@@ -2746,6 +2757,8 @@ mod tests {
             name: Some("Group".to_owned()),
             display_name: None,
             avatar_uri: None,
+            avatar_members: None,
+            group_state_version: None,
             my_role: Some("member".to_owned()),
             membership_status: Some("active".to_owned()),
             member_count: Some(1),

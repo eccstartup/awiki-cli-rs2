@@ -28,6 +28,8 @@ pub(crate) mod identity_custody_migration;
 pub(crate) mod identity_daemon_subkey;
 pub(crate) mod identity_device_join;
 pub(crate) mod identity_device_join_runtime;
+pub(crate) mod identity_device_rebind;
+pub(crate) mod identity_device_rebind_pending;
 pub(crate) mod identity_device_revoke;
 pub(crate) mod identity_device_revoke_pending;
 pub(crate) mod identity_device_state;

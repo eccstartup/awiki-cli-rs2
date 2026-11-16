@@ -178,6 +178,7 @@ impl TryFrom<crate::dto::config::DartImCoreOpenOptions> for im_core::ImCoreOpenO
         let mut options = im_core::ImCoreOpenOptions::default();
         options.identity_secret_storage_policy = value.identity_secret_storage_policy.into();
         options.multi_device_device_revoke_enabled = value.multi_device_device_revoke_enabled;
+        options.multi_device_device_rebind_enabled = value.multi_device_device_rebind_enabled;
         options.multi_device_direct_e2ee_enabled = value.multi_device_direct_e2ee_enabled;
         options.multi_device_group_e2ee_enabled = value.multi_device_group_e2ee_enabled;
         options.multi_device_handle_recovery_enabled = value.multi_device_handle_recovery_enabled;

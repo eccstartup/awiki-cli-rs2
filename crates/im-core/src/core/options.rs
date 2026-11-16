@@ -65,6 +65,11 @@ pub struct ImCoreOpenOptions {
     /// This rollout gate defaults to `false`. It is independent from Join and
     /// root transfer, and is never serialized into ANP or a DID Document.
     pub multi_device_device_revoke_enabled: bool,
+    /// Enables binding this device to an already imported root-only identity.
+    ///
+    /// This rollout gate defaults to `false`, is independent from Join and
+    /// Handle Recovery, and is never serialized into ANP or a DID Document.
+    pub multi_device_device_rebind_enabled: bool,
     /// Enables the exact-device P5 v2 Direct product path.
     ///
     /// This rollout gate defaults to `false`, is independent from Join and
@@ -104,6 +109,7 @@ impl Default for ImCoreOpenOptions {
             identity_secret_storage_policy: IdentitySecretStoragePolicy::default(),
             identity_secret_vault: None,
             multi_device_device_revoke_enabled: false,
+            multi_device_device_rebind_enabled: false,
             multi_device_direct_e2ee_enabled: false,
             multi_device_group_e2ee_enabled: false,
             multi_device_handle_recovery_enabled: false,
@@ -150,6 +156,11 @@ impl ImCoreOpenOptions {
 
     pub fn with_multi_device_device_revoke_enabled(mut self, enabled: bool) -> Self {
         self.multi_device_device_revoke_enabled = enabled;
+        self
+    }
+
+    pub fn with_multi_device_device_rebind_enabled(mut self, enabled: bool) -> Self {
+        self.multi_device_device_rebind_enabled = enabled;
         self
     }
 

@@ -1,6 +1,7 @@
 pub(crate) mod bind;
 pub(crate) mod device_document_update;
 pub(crate) mod device_join;
+pub(crate) mod device_rebind;
 pub(crate) mod device_revoke;
 pub(crate) mod directory;
 pub(crate) mod document;

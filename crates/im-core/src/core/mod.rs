@@ -23,7 +23,9 @@ pub(crate) struct ImCoreInner {
     pub(crate) device_join_lock: std::sync::Mutex<()>,
     pub(crate) device_revoke_enabled: bool,
     pub(crate) direct_e2ee_v2_enabled: bool,
+    pub(crate) device_rebind_enabled: bool,
     pub(crate) device_revoke_lock: tokio::sync::Mutex<()>,
+    pub(crate) device_rebind_lock: tokio::sync::Mutex<()>,
     pub(crate) group_e2ee_v2_enabled: bool,
     pub(crate) handle_recovery_enabled: bool,
     pub(crate) did_transition_vnext_hidden_rollout_enabled: bool,
@@ -137,7 +139,9 @@ impl ImCore {
                 device_join_lock: std::sync::Mutex::new(()),
                 device_revoke_enabled: options.multi_device_device_revoke_enabled,
                 direct_e2ee_v2_enabled: options.multi_device_direct_e2ee_enabled,
+                device_rebind_enabled: options.multi_device_device_rebind_enabled,
                 device_revoke_lock: tokio::sync::Mutex::new(()),
+                device_rebind_lock: tokio::sync::Mutex::new(()),
                 group_e2ee_v2_enabled: options.multi_device_group_e2ee_enabled,
                 handle_recovery_enabled: options.multi_device_handle_recovery_enabled,
                 did_transition_vnext_hidden_rollout_enabled: options
@@ -175,6 +179,10 @@ impl ImCore {
 
     pub fn device_revoke(&self) -> crate::identity::DeviceRevokeService<'_> {
         crate::identity::DeviceRevokeService::new(self)
+    }
+
+    pub fn device_rebind(&self) -> crate::identity::DeviceRebindService<'_> {
+        crate::identity::DeviceRebindService::new(self)
     }
 
     pub fn handle_recovery(&self) -> crate::identity::HandleRecoveryService<'_> {
@@ -1074,6 +1082,10 @@ impl ImCoreInner {
 
     pub(crate) fn device_revoke_enabled(&self) -> bool {
         self.device_revoke_enabled
+    }
+
+    pub(crate) fn device_rebind_enabled(&self) -> bool {
+        self.device_rebind_enabled
     }
 
     pub(crate) fn direct_e2ee_v2_enabled(&self) -> bool {
